@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 玩家数据（每个人不一样，不该进仓库）
+records.json
+settings.json
+crash.log
+
+# 构建产物
+build/
+dist/
+*.spec
+build/shots/

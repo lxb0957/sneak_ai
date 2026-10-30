@@ -1,0 +1,545 @@
+"""主入口：游戏循环、事件处理、渲染、通关结算。
+
+运行：python -m sneak_ai
+操作：主菜单回车开局 / WASD 移动 / Shift 潜行 / Space 冲刺 / 左键 射击 /
+      Q 或鼠标右键 投石 / F1 AI 调试视图 / M 静音 / R 重开 / ESC 回主菜单
+
+玩法闭环：
+1. 潜入：前往数据终端（绿色发光标记），一路避开 21 个哨兵的视线与听觉。
+2. 逃脱：拿到数据后全图警觉，返回撤离点（蓝色箭头）。
+3. 结算：抵达撤离点=胜利（评级 S/A/B/C + 得分 + 最佳纪录），被抓住=失败。
+
+手里有 3 颗石子 + 5 发消音手枪弹：
+- 石子扔到空地可以把附近哨兵引过去查看（只能制造"起疑"，不会暴露位置）；
+- 手枪能打倒地一个哨兵，但它 5 秒后会在自己的巡逻网里最远的位置重新上岗。
+  枪声（9.5 格）会招来一片"过去看看"的人；如果尸体被别人看见，
+  这片区域会进入 12 秒警戒（原地张望，不堵门，但很难再混过去）。
+
+  所以开枪不是清场，是买时间 —— 而且最好"躲着开"。
+"""
+
+import math
+import os
+import sys
+import time
+import traceback
+from pathlib import Path
+
+import pygame
+
+from . import constants as C
+from .ai.coordination import Coordinator
+from .audio.sfx import SFX
+from .core import records
+from .core.camera import Camera
+from .core.hud import HUD
+from .core.mapview import MapView
+from .core.minimap import Minimap
+from .core.menu import Menu
+from .core import settings
+from .core.renderer import PixelRenderer
+from .core.world import (World, build_demo_map, build_pickups,
+                         build_spawn_and_patrols)
+from .debug.debug_renderer import DebugRenderer
+from .entity.enemy import Enemy
+from .entity.player import Player
+from .perception.perception import Perception
+
+
+def _create_window() -> pygame.Surface:
+    """创建窗口：放不下就按比例降级，而不是让异常一路炸出去。
+
+    以前这里是一行裸 `set_mode((1280, 960))`。笔记本 1366×768、远程桌面、
+    没接显示器这三种常见情况都会抛 `pygame.error`，异常冒泡到 main() 之后
+    进程直接死 —— 用户看到的就是"黑窗口一闪就没了"，没有任何线索。
+
+    现在改成"先问屏幕有多大，能撑多大就多大"，并把**实际**尺寸写回常量：
+    小地图的视野框是按 VIEW_W/VIEW_H 画的，不同步就会框偏。
+
+    注意 `pygame.SCALED`：高 DPI 屏上 SDL 会把窗口放大到物理像素，
+    逻辑分辨率不变，代码里完全不用关心缩放系数。
+    """
+    sizes = []
+    # 无头驱动（SDL_VIDEODRIVER=dummy）报的是 1024x768 这个假尺寸，
+    # 按它"降级"会把所有截图、预览图和 benchmark 的分辨率悄悄改小。
+    # 自动化测试没有真实屏幕可言，一律用标准尺寸。
+    headless = os.environ.get("SDL_VIDEODRIVER", "").strip().lower() == "dummy"
+    if not headless:
+        try:
+            # display 模块必须先 init，否则 Info() 直接抛
+            # "video system not initialized" —— 被 except 一吞，
+            # 这套适配就永远不生效，等于白写。
+            pygame.display.init()
+            info = pygame.display.Info()
+            sw, sh = info.current_w, info.current_h
+            if sw > 0 and sh > 0:
+                # 标题栏 + 任务栏还要吃掉几十像素，留 8% 余量
+                room_w, room_h = sw * 0.92, sh * 0.92
+                # 用固定的 4:3 候选表而不是按比例乘算：
+                # 乘算后取整会把比例切歪（1280x960 打成 921x691 就不是 4:3 了），
+                # 候选表的每一档天生比例正确，挑第一个放得下的即可。
+                sizes = [(w, h) for (w, h) in (
+                    (1280, 960), (1152, 864), (1024, 768), (960, 720),
+                    (896, 672), (800, 600), (640, 480),
+                ) if w <= room_w and h <= room_h] or [(640, 480)]
+        except Exception:
+            pass
+    sizes.append((C.WINDOW_W, C.WINDOW_H))
+    sizes.append((1024, 768))
+    sizes.append((800, 600))
+
+    last_err = None
+    for w, h in sizes:
+        for flags in (0, pygame.SCALED):
+            try:
+                surf = pygame.display.set_mode((w, h), flags)
+            except pygame.error as exc:
+                last_err = exc
+                continue
+            if surf is not None:
+                C.WINDOW_W, C.WINDOW_H = int(w), int(h)
+                C.VIEW_W = C.WINDOW_W // C.TILE_SIZE
+                C.VIEW_H = C.WINDOW_H // C.TILE_SIZE
+                return surf
+    raise last_err if last_err is not None else pygame.error("没有可用的显示设备")
+
+
+class Game:
+    def __init__(self):
+        pygame.init()
+        self.screen = _create_window()
+        pygame.display.set_caption("潜行协议 Stealth Protocol")
+        self.clock = pygame.time.Clock()
+
+        self.sfx = SFX()
+        # 音效开关要跨局记住：玩家上次按了 M，这次开局就别再响
+        self.sfx.muted = settings.load_muted()
+        self.cam = Camera()
+        self.perception = Perception()
+        self.debug = DebugRenderer()
+        self.px = PixelRenderer()
+        self.hud = HUD()
+        self.best = records.load()
+        self.menu = Menu(self.best)
+
+        self._time_accum = 0.0  # 驱动脉动/动画相位
+        self._step_acc = 0.0    # 脚步音效的移动距离累积
+        self._scored = False    # 本局是否已提交成绩
+        self.new_record = False
+        self._prev_stamina = C.STAMINA_MAX
+        self._tips_shown: set = set()   # 本会话已提示过的资源类型
+        self._show_intro = False        # 从菜单开局的第一条引导
+
+        self._new_world()
+        self.running = True
+
+    # ============ 世界构建 ============
+    def _new_world(self) -> None:
+        """（重）建一局：地图、玩家、敌人、静态地图烘焙。"""
+        self.world = World(build_demo_map())
+        self.world.coordinator = Coordinator(self.world.grid)
+        self.mapview = MapView(self.world.grid)
+        self.minimap = Minimap(self.world.grid)
+
+        player_spawn, enemy_cfg = build_spawn_and_patrols(self.world.grid)
+        self.player = Player(player_spawn[0], player_spawn[1])
+        self.world.player = self.player
+        self.world.enemies = [
+            Enemy(x, y, patrol=pts, perception=self.perception)
+            for (x, y, pts) in enemy_cfg
+        ]
+        self.world.pickups = build_pickups(self.world.grid)
+        self.cam.follow(self.player.x, self.player.y)  # 开局直接对准，不要平滑漂移
+
+    def run(self) -> None:
+        while self.running:
+            dt = self.clock.tick(C.FPS) / 1000.0
+            dt = min(dt, 0.05)
+            self._time_accum += dt
+            if self.menu.active:
+                self._handle_menu_events()
+                self._render_menu()
+                continue
+            self._handle_events()
+            self.world.update(dt)
+            self._update_tips(dt)
+            self._handle_audio(dt)
+            self._handle_scoring()
+            self._render(dt)
+        pygame.quit()
+
+    # ============ 主菜单 ============
+    def _handle_menu_events(self) -> None:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                self.running = False
+            else:
+                self.menu.handle_event(ev, self.sfx)
+                if not self.menu.active:      # 回车 / 点击 → 开局
+                    self._on_menu_start()
+
+    def _to_menu(self) -> None:
+        """回主菜单：刷新最佳纪录，下次开局是一局新的。"""
+        self.menu.best = records.load()
+        self.menu.active = True
+        self.hud._tip_left = 0.0
+
+    def _on_menu_start(self) -> None:
+        """从菜单进入游戏：一局新的，并给开局引导。"""
+        self._restart()
+        self._tips_shown = set()
+        self._show_intro = True
+
+    def _render_menu(self) -> None:
+        self.menu.draw(self.screen, self.sfx.muted, self._time_accum)
+        pygame.display.flip()
+
+    # ============ 引导提示 ============
+    def _update_tips(self, dt: float) -> None:
+        """走近补给点才提示用法：教学跟着时机走，不是开局倒一堆字。"""
+        if self.world.state in (C.STATE_VICTORY, C.STATE_DEFEAT):
+            return
+        if self._show_intro:
+            self._show_intro = False
+            self.hud.show_tip("前往绿色标记的数据终端 —— 蹲下（Shift）移动更安静",
+                              life=5.0)
+        p = self.world.player
+        TIPS = {
+            "ammo": "弹药包：走近自动补 2 发（上限 8）",
+            "stone": "石子堆：走近捡 2 颗，Q / 右键扔出去引开哨兵",
+            "shield": "护盾：捡起后能挡下一次抓捕，碰到你的哨兵会倒下",
+        }
+        for it in self.world.pickups:
+            if it["taken"] or it["kind"] in self._tips_shown:
+                continue
+            if math.hypot(it["x"] - p.x, it["y"] - p.y) < 3.5:
+                self._tips_shown.add(it["kind"])
+                self.hud.show_tip(TIPS[it["kind"]], life=4.0)
+                break
+
+    # ============ 事件 ============
+    def _handle_events(self) -> None:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                self.running = False
+            elif ev.type == pygame.KEYDOWN:
+                if ev.key == pygame.K_ESCAPE:
+                    # 游戏中 ESC → 回主菜单（战绩照常结算过的不受影响）；
+                    # 菜单里 ESC 才退出程序
+                    self._to_menu()
+                elif ev.key == pygame.K_F1:
+                    self.debug.toggle()
+                elif ev.key == pygame.K_m:
+                    self.sfx.toggle_mute()
+                    settings.save(self.sfx.muted)
+                # 结算画面：R 重开
+                if self.world.state in (C.STATE_VICTORY, C.STATE_DEFEAT):
+                    if ev.key == pygame.K_r:
+                        self._restart()
+                    continue
+                # 投石：Q 朝当前朝向扔（鼠标右键可以瞄准具体位置）
+                if ev.key == pygame.K_q:
+                    self._throw(None)
+                    continue
+                self.player.handle_key(ev.key, True)
+            elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
+                # 左键 = 开枪。瞄哪打哪，射线判定，墙上会打出火花
+                if self.world.state not in (C.STATE_VICTORY, C.STATE_DEFEAT):
+                    wx, wy = self.cam.screen_to_world(*ev.pos)
+                    self._fire((wx, wy))
+            elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 3:
+                if self.world.state not in (C.STATE_VICTORY, C.STATE_DEFEAT):
+                    wx, wy = self.cam.screen_to_world(*ev.pos)
+                    self._throw((wx, wy))
+            elif ev.type == pygame.KEYUP:
+                if self.world.state in (C.STATE_VICTORY, C.STATE_DEFEAT):
+                    continue
+                self.player.handle_key(ev.key, False)
+
+    def _throw(self, target) -> None:
+        """扔石子。没石子时给一个明确的失败反馈，别让玩家以为是按键坏了。"""
+        if self.player.stones <= 0:
+            self.sfx.play("empty", cooldown=0.4)
+            return
+        self.world.throw_stone(target)
+
+    def _fire(self, target) -> None:
+        """开枪。没子弹 / 冷却中给空仓音，别让玩家以为是鼠标坏了。"""
+        if self.world.shoot(target) == "empty":
+            self.sfx.play("gun_empty", cooldown=0.25)
+
+    def _restart(self) -> None:
+        """重开一局：重建世界、玩家、敌人，保留渲染器和调试设置。"""
+        self._new_world()
+        self._step_acc = 0.0
+        self._scored = False
+        self.new_record = False
+        self._prev_stamina = C.STAMINA_MAX
+
+    # ============ 音效 ============
+    def _handle_audio(self, dt: float) -> None:
+        """把世界事件翻译成音效；脚步声按"移动距离"触发，跑得越快越密。"""
+        for ev in self.world.events:
+            if ev == "spotted":
+                self.sfx.play("spotted")
+            elif ev == "radio":
+                self.sfx.play("radio", cooldown=0.8, volume=0.8)
+            elif ev == "pickup":
+                self.sfx.play("pickup")
+            elif ev == "victory":
+                self.sfx.play("victory")
+            elif ev == "defeat":
+                self.sfx.play("defeat")
+            elif ev == "stone_throw":
+                self.sfx.play("throw", cooldown=0.1, volume=0.9)
+            elif ev == "stone_land":
+                self.sfx.play("stone_land", volume=0.9)
+            elif ev == "shot":
+                self.sfx.play("shot", cooldown=0.05)
+            elif ev == "hit":
+                self.sfx.play("hit", cooldown=0.08)
+            elif ev == "respawn":
+                self.sfx.play("respawn", cooldown=0.3, volume=0.7)
+            elif ev == "body_found":
+                # 尸体被看见：一句短的警报，比枪声更"严重"
+                self.sfx.play("body_found", cooldown=0.4)
+            elif ev in ("pickup_ammo", "pickup_stone"):
+                self.sfx.play("pickup", cooldown=0.15, volume=0.85)
+            elif ev == "pickup_shield":
+                self.sfx.play("pickup_shield", cooldown=0.15)
+            elif ev == "shield_break":
+                self.sfx.play("shield_break")
+
+        player = self.player
+        if player.moving:
+            # 走 0.62 格触发一次脚步：潜行时几乎听不见（音量低 + 间隔长）
+            self._step_acc += player.speed * dt
+            if self._step_acc >= 0.62:
+                self._step_acc = 0.0
+                self.sfx.play("step", cooldown=0.12,
+                              volume=0.22 + 0.22 * min(player.noise, 1.6))
+        else:
+            self._step_acc = min(self._step_acc, 0.3)
+
+        # 体力刚好耗尽时给一个短促提示音
+        if player.stamina <= 0.0 < self._prev_stamina:
+            self.sfx.play("stamina_out")
+        self._prev_stamina = player.stamina
+
+    # ============ 结算 ============
+    def _handle_scoring(self) -> None:
+        if self.world.state == C.STATE_VICTORY and not self._scored:
+            self._scored = True
+            self.new_record = records.submit(self.world.record())
+            self.best = records.load()
+            self.player.clear_keys()
+
+    # ============ 渲染 ============
+    def _render(self, dt: float = 1 / 60.0) -> None:
+        screen = self.screen
+        self.cam.follow(self.player.x, self.player.y, dt)
+        # 地图预渲染图铺满整个视口，不需要先 fill 背景（省一次全屏填充）
+        self.mapview.draw(screen, self.cam)
+        self._draw_goals()
+        # 调试视图里已经有精确视野锥了，就别再叠一层淡显的（会糊成一片）
+        if not self.debug.enabled:
+            self.px.draw_vision_cones(screen, self.cam, self.world)
+        # 噪音圈 / 落点声波画在角色下面：它是"地面上的信息"，不该盖住人
+        self.px.draw_noise(screen, self.cam, self.world)
+        # 尸体和重生预警也在地面层：活人要压在它们上面
+        self.px.draw_downed(screen, self.cam, self.world, self._time_accum)
+        # 补给点在地面层：它是"地上的东西"，被角色压住才符合空间直觉
+        self.px.draw_pickups(screen, self.cam, self.world, self._time_accum)
+        self._draw_enemies()
+        self._draw_player()
+        self.px.draw_stones(screen, self.cam, self.world)
+        # 弹道在最上层：开枪的反馈必须盖住一切，否则玩家会以为没打出去
+        self.px.draw_shots(screen, self.cam, self.world)
+        # 命中记号比曳光还靠上：它只活 0.22 秒，被任何东西盖住就等于没画
+        self.px.draw_hitmarks(screen, self.cam, self.world)
+        self.debug.draw(screen, self.cam, self.world, self.perception, self.player)
+
+        self.px.draw_vignette(screen, self._danger_level())
+        self.minimap.draw(screen, self.world, self.cam, self._pulse())
+        self.hud.draw_threat_markers(screen, self.cam, self.world, self._time_accum)
+        self.hud.draw(screen, self.world, self.player, self._time_accum, dt,
+                      self.sfx.muted)
+
+        if self.world.state in (C.STATE_VICTORY, C.STATE_DEFEAT):
+            self.hud.draw_end(screen, self.world, self.best, self.new_record,
+                              self._time_accum)
+        pygame.display.flip()
+
+    def _pulse(self) -> float:
+        return 0.5 + 0.5 * math.sin(self._time_accum * 2.5)
+
+    def _danger_level(self) -> float:
+        """屏幕红光强度：有人正看着你 > 有人在追 > 有人起疑。"""
+        if self.world.seeing:
+            return 0.45 + 0.25 * (0.5 + 0.5 * math.sin(self._time_accum * 7.0))
+        if self.world.engaged:
+            return 0.30
+        if self.world.threat >= C.SUSPICION_CURIOUS:
+            return 0.16
+        return 0.0
+
+    # ============ 目标点 ============
+    def _draw_goals(self) -> None:
+        pulse = self._pulse()
+        # 数据终端：仅潜入阶段显示
+        if self.world.state == C.STATE_INFILTRATE:
+            tx, ty = C.DATA_TERMINAL
+            sx, sy = self.cam.world_to_screen(tx, ty)
+            self.px.draw_goal(self.screen, int(sx), int(sy), "terminal", pulse)
+        # 撤离点：逃脱阶段显示（拿数据后高亮）
+        if self.world.state == C.STATE_EXFILTRATE:
+            tx, ty = C.EXFIL_POINT
+            sx, sy = self.cam.world_to_screen(tx, ty)
+            self.px.draw_goal(self.screen, int(sx), int(sy), "exit", pulse,
+                              has_data=self.world.has_data)
+
+    # ============ 角色 ============
+    def _draw_player(self) -> None:
+        sx, sy = self.cam.world_to_screen(self.player.x, self.player.y)
+        self.px.draw_character(
+            self.screen, int(sx), int(sy), self.player.facing,
+            C.COL_PLAYER_BODY, C.COL_PLAYER_HEAD, is_player=True,
+            moving=self.player.moving, sneaking=self.player.sneaking,
+        )
+        # 护盾光圈画在人身上：这是"你还剩一次免死"的唯一可见提示
+        self.px.draw_shield_aura(self.screen, self.cam, self.player,
+                                 self._time_accum)
+
+    def _draw_enemies(self) -> None:
+        # 瞄准目标算一次，整帧复用：它决定"准星画在谁身上"
+        aim = None
+        if self.world.state not in (C.STATE_VICTORY, C.STATE_DEFEAT):
+            aim = self.world.aim_target(
+                self.cam.screen_to_world(*pygame.mouse.get_pos())
+            )
+
+        for e in self.world.enemies:
+            # 阵亡的哨兵由 draw_downed 负责画成尸体，这里跳过
+            if not e.alive:
+                continue
+            sx, sy = self.cam.world_to_screen(e.x, e.y)
+            if not (-64 < sx < C.WINDOW_W + 64 and -64 < sy < C.WINDOW_H + 64):
+                continue
+            role_name = e.role.value
+            color = C.COL_ROLE.get(role_name, C.COL_ENEMY)
+            self.px.draw_character(
+                self.screen, int(sx), int(sy), e.facing, color,
+                is_player=False, moving=e.moving,
+                alert=(role_name != "patrol"),
+            )
+            # 准星画在角色之后：它必须压在最上层才读得清
+            if e is aim:
+                self.px.draw_aim_reticle(
+                    self.screen, int(sx), int(sy), self.player.ammo > 0
+                )
+            # 头顶状态气泡：? 起疑调查 / ! 已锁定
+            self.px.draw_status_icon(self.screen, int(sx), int(sy), e.icon,
+                                    self._time_accum)
+            # 正在看着我的哨兵：脚下画可疑度弧 / 确认后画锁定括号。
+            # 只画"看得见我"的人 —— 别人在别处起疑不该在屏幕上抢注意力。
+            if e.sees_player:
+                self.px.draw_awareness(
+                    self.screen, int(sx), int(sy), e.suspicion,
+                    e.suspicion >= C.SUSPICION_CONFIRM, self._time_accum,
+                )
+
+
+def _frozen_data_dir():
+    """打包成 exe 后，数据目录要落在**可执行文件旁边**，不是临时解包目录。
+
+    PyInstaller 的 onefile 会把所有代码解到 `sys._MEIPASS`，那个目录
+    每次启动都换、退出即删。records.py / settings.py 算路径用的是
+    `Path(__file__).parents[n]` —— 打包后 `__file__` 就在那个临时目录里，
+    于是"打完一局、退出、纪录没了"，而且没有任何报错。
+
+    所以入口第一件事是把路径锚点换掉。没打包时返回 None，什么都不动。
+    """
+    if not getattr(sys, "frozen", False):
+        return None
+    return Path(sys.executable).resolve().parent
+
+
+def _dump_crash(exc: BaseException):
+    """把崩溃现场追加到项目根目录的 crash.log。
+
+    闪退之所以难修，是因为它什么都不告诉你：窗口先消失，控制台跟着关，
+    连"是哪一行挂的"都拿不到。所以第一步不是修 bug，是先让 bug 能被看见。
+    """
+    try:
+        anchored = _frozen_data_dir()
+        root = anchored if anchored is not None else Path(__file__).resolve().parents[1]
+        log = root / "crash.log"
+        with open(log, "a", encoding="utf-8") as f:
+            f.write(f"=== {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+            f.write(f"python {sys.version.split()[0]}  pygame {pygame.version.ver}\n")
+            traceback.print_exception(type(exc), exc, exc.__traceback__, file=f)
+            f.write("\n")
+        return log
+    except OSError:
+        return None
+
+
+def _show_crash(exc: BaseException, log) -> None:
+    """窗口还活着时把错误画上去停 8 秒；直接黑屏退出就等于"闪退"。"""
+    try:
+        if not pygame.get_init() or pygame.display.get_surface() is None:
+            return
+        from .core.ui import font
+
+        screen = pygame.display.get_surface()
+        W, H = screen.get_width(), screen.get_height()
+        screen.fill((16, 16, 20))
+        rows = [
+            (font(24, bold=True), "游戏出错了，堆栈已写入 crash.log", (255, 96, 88)),
+            (font(16), f"{type(exc).__name__}: {exc}", (226, 226, 232)),
+            (font(15), "把这个文件发给开发者就能定位；按任意键或关闭窗口退出。",
+             (150, 158, 170)),
+        ]
+        if log is not None:
+            rows.append((font(14), str(log), (110, 120, 132)))
+        y = H // 2 - 70
+        for f, text, color in rows:
+            surf = f.render(text, True, color)
+            screen.blit(surf, ((W - surf.get_width()) // 2, y))
+            y += surf.get_height() + 14
+        pygame.display.flip()
+
+        deadline = time.time() + 8.0
+        while time.time() < deadline:
+            for ev in pygame.event.get():
+                if ev.type in (pygame.QUIT, pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN):
+                    return
+            pygame.time.wait(50)
+    except Exception:
+        pass
+
+
+def main() -> int:
+    """入口：正常退出返回 0，崩溃返回 1 并留下 crash.log。"""
+    anchored = _frozen_data_dir()
+    if anchored is not None:
+        settings.DATA_DIR = anchored
+        records.DATA_DIR = anchored
+    try:
+        Game().run()
+    except KeyboardInterrupt:
+        print("\n已手动中断。")
+        return 0
+    except BaseException as exc:      # noqa: BLE001 —— 崩溃现场必须留下来
+        log = _dump_crash(exc)
+        print(f"[崩溃] {type(exc).__name__}: {exc}", file=sys.stderr)
+        traceback.print_exc()
+        if log is not None:
+            print(f"完整堆栈已写入：{log}", file=sys.stderr)
+        _show_crash(exc, log)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,17 @@
+# 行尾固定。不加这个文件的话，Windows 上 core.autocrlf=true 的机器 clone 下来
+# 会把 .bat 写成 LF，cmd 会读串脚本（中文 echo 行被当命令执行）。
+# 见 run.bat 头部的注释：这个脚本必须保持 CRLF。
+* text=auto
+
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.sh  text eol=lf
+
+# 二进制：git 不要试图 diff / 转换
+*.gif  binary
+*.png  binary
+*.jpg  binary
+*.wav  binary
+*.ttf  binary
+*.otf  binary
+*.exe  binary
