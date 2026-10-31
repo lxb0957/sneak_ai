@@ -181,12 +181,30 @@ def test_defeat_retry_keeps_time():
           f"{spent:.2f}s → {g.world.elapsed:.2f}s")
 
 
+def test_start_level_switch():
+    """`--level N` 只改**起点**：开局就在那关，重开一局也回那关，且不许越界。"""
+    last = len(L.LEVELS) - 1
+    g = Game(start_level=last)
+    check("从指定关开局", g.level_index == last and
+          g.world.level_name == L.LEVELS[last].name, f"{g.world.level_name}")
+    g._restart_run()
+    check("重开一局回到起点关，而不是被踢回第 1 关", g.level_index == last)
+
+    g0 = Game(start_level=0)
+    g0._restart_run()
+    check("默认起点仍是第 1 关", g0.level_index == 0)
+
+    gbig = Game(start_level=99)
+    check("越界的起点被夹到最后一关", gbig.level_index == last)
+
+
 def main():
     print("W18 主循环 / 过关切关")
     test_clear_card_advances_to_next_level()
     test_card_freezes_world()
     test_no_double_advance_and_carry()
     test_defeat_retry_keeps_time()
+    test_start_level_switch()
     print(f"\n全部通过（{len(PASSED)} 项断言）。")
     pygame.quit()
 

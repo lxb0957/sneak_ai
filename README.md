@@ -536,6 +536,7 @@ pip install -i https://pypi.tuna.tsinghua.edu.cn/simple pygame-ce numpy matplotl
 
 # 运行游戏
 python -m sneak_ai
+python -m sneak_ai --level 3        # 直接从第 3 关开局（也支持 exe：潜行协议.exe --level 3）
 # 或双击 run.bat
 ```
 

@@ -106,7 +106,7 @@ def _create_window() -> pygame.Surface:
 
 
 class Game:
-    def __init__(self):
+    def __init__(self, start_level: int = 0):
         pygame.init()
         self.screen = _create_window()
         pygame.display.set_caption("潜行协议 Stealth Protocol")
@@ -132,7 +132,11 @@ class Game:
         self._show_intro = False        # 从菜单开局的第一条引导
 
         # ---- 关卡推进 ----
-        self.level_index = 0
+        # start_level 只由命令行 `--level N` 决定（调试/给朋友演示第三关用）。
+        # 正常开局是 0，从菜单重开也回 0 —— 但"重开一局"回到的是**起点**，
+        # 所以 _restart_run 用的是 _start_level，不是硬编码的 0。
+        self._start_level = max(0, min(start_level, len(L.LEVELS) - 1))
+        self.level_index = self._start_level
         self._carry: dict = {}       # 跨关延续的统计（见 _snapshot_carry）
         self._next_timer = 0.0       # 过关过场剩余时间（>0 表示正在过场）
         self._clear_veil = None      # 过场遮罩（惰性创建，别每帧分配全屏 Surface）
@@ -277,8 +281,8 @@ class Game:
         self._next_timer = 0.0
 
     def _restart_run(self) -> None:
-        """整局重来：回到第 1 关，跨关统计清零。"""
-        self.level_index = 0
+        """整局重来：回到起点关（默认第 1 关），跨关统计清零。"""
+        self.level_index = self._start_level
         self._carry = {}
         self._restart()
 
@@ -761,12 +765,22 @@ def main() -> int:
     # 自检要放在最前面：它故意跳过菜单和存档，也不该被数据目录重定向影响
     if "--selfcheck" in sys.argv:
         return _selfcheck()
+    start = 0
+    if "--level" in sys.argv:
+        try:
+            start = int(sys.argv[sys.argv.index("--level") + 1]) - 1
+        except (IndexError, ValueError):
+            print("用法：潜行协议.exe --level 3   （从第 3 关开始）", file=sys.stderr)
+            return 2
+        if not 0 <= start < len(L.LEVELS):
+            print(f"--level 只能是 1~{len(L.LEVELS)}", file=sys.stderr)
+            return 2
     anchored = _frozen_data_dir()
     if anchored is not None:
         settings.DATA_DIR = anchored
         records.DATA_DIR = anchored
     try:
-        Game().run()
+        Game(start_level=start).run()
     except KeyboardInterrupt:
         print("\n已手动中断。")
         return 0
