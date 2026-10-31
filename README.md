@@ -139,9 +139,9 @@ Selector
 
 两关是**一次连续行动**：用时、被发现、击倒、剩余弹药跨关延续，最后一关打完才结算成绩与评级；评级基准按"已打的关数"累计（两关 S 线 135 秒），否则越往后越容易拿 S。中途失败只重开**当前关**，但已经耗掉的时间留着 —— 罚时间、不罚进度。
 
-![环形枢纽实跑](assets/ring_demo.png)
+![环形枢纽实跑](assets/demo_lv2.gif)
 
-*(两张都是引擎实跑帧（`scripts/shoot.py --level 1`）：左 = 第 10 秒，机器人走到外环南廊 `(35,52)`，前方 4 格宽的走廊一眼望穿；右 = 第 26 秒，已经进到金库内圈、贴着终端 `(52,25)`。整局 46.4 秒、被发现 2 次、920 分 A 评级。)*
+*(第二关的实跑录像，同样一帧没摆拍：`python scripts/record_demo.py --level 1` 直接调 `botrun.run()`，46.4 秒、被发现 2 次、一枪没开、920 分 A 评级。第 10 秒它在 4 格宽的外环南廊上，第 26 秒已经穿进金库内圈贴上终端。)*
 
 ### 第二关是机器人"审"出来的
 
@@ -558,6 +558,7 @@ python scripts/benchmark_pathing.py     # 寻路性能对比（每档 3 轮取�
 python scripts/benchmark_ai_metrics.py  # AI 行为指标统计
 python scripts/make_charts.py           # 生成图表
 python scripts/record_demo.py           # 录制演示 GIF（用同一套机器人策略跑通关）
+python scripts/record_demo.py --level 1 # 录第 2 关 -> assets/demo_lv2.gif
 python scripts/make_previews.py         # 重新生成两张 README 预览图
 python scripts/make_sprite_sheet.py     # 生成角色精灵表（检查像素小人）
 python scripts/make_decoy_figure.py     # 生成投石诱敌的对照图

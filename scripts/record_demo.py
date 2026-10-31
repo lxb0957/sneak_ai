@@ -8,10 +8,15 @@ GO / FLEE / HIDE 状态机。所以 README 里那句"这段 GIF 不是摆拍"
 （早期版本这里抄了一份策略代码，结果 botrun 后来改进（比如把"哨兵站岗
 环视"算进危险度），录像用的还是旧逻辑，两边成绩对不上 —— 抄代码的代价。）
 
-用法：python scripts/record_demo.py
-输出：assets/demo.gif
+用法：
+    python scripts/record_demo.py              # 第 1 关 -> assets/demo.gif
+    python scripts/record_demo.py --level 1    # 第 2 关 -> assets/demo_lv2.gif
+
+为什么按关分开录、而不是录成一整局：两关合起来 120 秒，GIF 会翻倍到 15MB 上下，
+README 打开就卡。分成两条反而更好读 —— 读者点进哪一节就看哪一关的实跑。
 """
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -33,10 +38,17 @@ GIF_COLORS = 48           # 调色板颜色数：像素风本来就色少，砍�
 MAX_SECONDS = 120.0
 
 
-def record(out_path=None):
+def record(out_path=None, level=0):
     pygame.init()
     g = Game()
-    out_path = out_path or (ROOT / "assets" / "demo.gif")
+    if level:
+        # 只录指定关卡：直接切关重建，跨关统计清空 —— 否则机器人赢了第 1 关
+        # 会触发关卡推进，录到的就不是这一关的画面了。
+        g.level_index = level
+        g._carry = {}
+        g._new_world()
+    out_path = out_path or (ROOT / "assets"
+                            / (f"demo_lv{level + 1}.gif" if level else "demo.gif"))
 
     # 关掉 F1 调试层：游戏自带的视野锥 + 小地图已经把 AI 状态讲清楚了，
     # 再叠一层调试线反而糊。
@@ -90,4 +102,8 @@ def record(out_path=None):
 
 
 if __name__ == "__main__":
-    record()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--level", type=int, default=0, help="0=哨站 1=环形枢纽")
+    ap.add_argument("--out", default=None, help="输出路径（默认按关卡取名）")
+    a = ap.parse_args()
+    record(Path(a.out) if a.out else None, a.level)
