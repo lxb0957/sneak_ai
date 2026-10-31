@@ -463,6 +463,11 @@ class Game:
         if self.level_index + 1 < len(L.LEVELS):
             self._next_timer = 1.6
             return
+        # 用 `--level N` 中途开局的这一局不计入最佳纪录：
+        # 从第 3 关起步只要 35 秒就能"打完三关"，交了就是一条永远刷不掉的假纪录 ——
+        # 存档是玩家唯一的数据，宁可这一局不记，也不能让它被作弊值污染。
+        if self._start_level > 0:
+            return
         self.new_record = records.submit(self.world.record())
         self.best = records.load()
 

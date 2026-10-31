@@ -197,6 +197,23 @@ def test_start_level_switch():
     gbig = Game(start_level=99)
     check("越界的起点被夹到最后一关", gbig.level_index == last)
 
+    # 中途开局的这一局不许写最佳纪录（否则一条 35 秒的"三关"成绩会污染纪录表）
+    from sneak_ai.core import records
+    calls = []
+    real_submit = records.submit
+    records.submit = lambda rec: calls.append(rec) or False
+    try:
+        g2 = Game(start_level=last)
+        g2._carry = {}
+        teleport(g2, *g2.world.terminal)
+        step(g2, DT * 2)
+        teleport(g2, *g2.world.exfil)
+        step(g2, 3.0)
+    finally:
+        records.submit = real_submit
+    check("--level 起局的那一局不写纪录", calls == [] and
+          g2.world.state == C.STATE_VICTORY)
+
 
 def main():
     print("W18 主循环 / 过关切关")
