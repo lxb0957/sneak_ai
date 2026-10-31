@@ -1,16 +1,19 @@
-"""感知层：视觉锥（FOV）+ 射线遮挡 + 听觉半径 + 可疑度累积。
+"""感知层：视觉锥（FOV）+ 射线遮挡 + 听觉代价场 + 可疑度累积。
 
 这是 AI "看见世界"的眼睛。关键设计：
 1. 视觉锥：只对朝向一定夹角内的目标产生感知（敌人不是 360° 透视）。
 2. 射线遮挡：即便在锥内，中间有墙也看不见 —— 用 raycast 逐瓦片判定。
 3. 距离衰减：越远越难发现，避免"秒发现"。
 4. 听觉：潜行时脚步轻、跑动时脚步重，影响被听见的距离。
+   声音的传播距离由 `sound.SoundField` 给出 —— 和视觉一样要过地图，
+   穿墙能传但传不远，"拐个弯"才是摆脱听觉的正确姿势。
 """
 
 import math
 
 from .. import constants as C
 from ..core.grid import GridMap, raycast_blocks
+from .sound import hearing_range
 
 
 def angle_diff(a: float, b: float) -> float:
@@ -77,6 +80,7 @@ class Perception:
         eye: tuple,
         target: tuple,
         noise: float,
+        cost: float = None,
     ) -> float:
         """返回 0~1 的听觉强度。noise 是目标的噪音系数（0~2）。
 
@@ -84,14 +88,26 @@ class Perception:
         - 潜行（0.30）：几乎只能贴脸听见，是潜行玩法的核心收益
         - 走路（1.00）：基础听觉半径
         - 冲刺（1.85）：半径接近翻倍，跑起来会"招人"
+
+        `cost` 是声音**实际走过的路程**（由 `perception/sound.py` 的
+        代价场给出，穿墙要额外收费）。传 None 时退回直线距离 ——
+        只留给"没有地图的纯函数测试"，游戏里的调用点都必须传。
+
+        旧版这里是纯欧氏距离：隔着三堵墙、二十几格实体岩，照样听得一清二楚。
+        而视觉那边是用 raycast 做过遮挡的 —— 眼睛要射线、耳朵能透视，
+        等于给 AI 留了一个"听墙脚"的后门。
         """
         if noise <= C.NOISE_STILL:
             return 0.0
-        ex, ey = eye
-        tx, ty = target
-        dist = ((tx - ex) ** 2 + (ty - ey) ** 2) ** 0.5
-        # 有效听觉半径随噪音放大（0.55 ~ 1.5 倍之间）
-        eff_range = self.hear_range * min(1.5, 0.55 + 0.6 * noise)
+        eff_range = hearing_range(self.hear_range, noise)
+        if eff_range <= 0.0:
+            return 0.0
+        if cost is None:
+            ex, ey = eye
+            tx, ty = target
+            dist = ((tx - ex) ** 2 + (ty - ey) ** 2) ** 0.5
+        else:
+            dist = cost
         if dist > eff_range:
             return 0.0
         return min(1.0, noise * 0.8) * (1.0 - dist / eff_range)
@@ -104,10 +120,11 @@ class Perception:
         grid: GridMap,
         dt: float,
         noise: float,
+        cost: float = None,
     ) -> float:
         """累积可疑度；看不见听不见时缓慢衰减。返回当前可疑度。"""
         see = self.can_see(eye, facing, target, grid)
-        hear = self.can_hear(eye, target, noise)
+        hear = self.can_hear(eye, target, noise, cost=cost)
         stim = max(see, hear * 0.6)  # 听觉线索弱于视觉
         if stim > 0:
             self.suspicion = min(1.0, self.suspicion + stim * dt * 1.5)

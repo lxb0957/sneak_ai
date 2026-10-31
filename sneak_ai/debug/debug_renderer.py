@@ -58,7 +58,9 @@ class DebugRenderer:
                 (ex + math.cos(e.facing) * r * 0.35, ey + math.sin(e.facing) * r * 0.35),
                 1,
             )
-            # 听觉半径
+            # 听觉半径：画的是**名义半径**（空气里的上限），不是"这一圈都听得见"。
+            # 实际听觉范围由声音代价场决定 —— 隔着墙会被削掉一截，
+            # 所以真实的可闻区域是这张圆被墙"啃"过的样子，不是这个圆本身。
             pygame.draw.circle(
                 self.surf,
                 (*C.COL_HEAR, 50),

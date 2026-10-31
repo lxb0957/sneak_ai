@@ -26,6 +26,7 @@ from ..ai.behavior_tree import (
     Status,
 )
 from ..ai.coordination import Role
+from ..ai.search_plan import build_search_plan, find_hiding_spots
 from ..pathing.astar import astar
 
 
@@ -61,6 +62,15 @@ class Enemy:
         self._investigate_time = 0.0
         self._look_timer = 0.0
         self._scan_dir = 1.0
+        # GOAP 搜索计划：查哪几处、按什么顺序查，由 ai/search_plan.py 规划
+        self._search_steps = None   # [("move"|"sweep", (tx, ty)), ...]
+        self._search_i = 0
+        self._search_origin = None  # 计划依据的最后已知位置（漂了要重规划）
+        self._plan_saw = None       # 排计划时"看见过没有"，用来判断计划是否过期
+        # 本轮"起疑事件"里有没有真的看见过人。
+        # 只有真看见过，才值得去翻角落；只是听到脚步，看到记忆点就够了 ——
+        # 否则一次路过就能让半个走廊的哨兵离岗去搜箱子，玩家读不出规律。
+        self._seen_this_episode = False
         # "正在查某个声音"的锁：石子落地后的一小段时间里，
         # 不拿玩家自己的脚步声去覆盖调查点（否则扔了石头也等于没扔）
         self._noise_lock = 0.0
@@ -210,6 +220,8 @@ class Enemy:
         self._noise_lock = 0.0
         self.body_alert = 0.0
         self._stuck_n = 0
+        self._clear_search_plan()
+        self._seen_this_episode = False
         self.moving = False
         self._intent_move = False
         self.state_name = "down"
@@ -246,6 +258,8 @@ class Enemy:
         self.state_name = "patrol"
         self.body_found = False
         self.body_alert = 0.0
+        self._clear_search_plan()
+        self._seen_this_episode = False
         # 复活点离玩家太近时给一段"苏醒"时间：否则等于在玩家脸上刷出一个
         # 立刻能抓人的哨兵，玩家连反应的机会都没有。
         p = world.player
@@ -270,7 +284,11 @@ class Enemy:
         see = p.can_see(
             self.pos, self.facing, player.pos, world.grid, view_range=self.view_range()
         )
-        hear = p.can_hear(self.pos, player.pos, player.noise)
+        # 听觉要和视觉一样"过地图"：声音的实际路程由世界缓存的声音场给出，
+        # 穿墙按 SOUND_WALL_COST 额外收费。没有它，隔三堵墙也听得见。
+        hear = p.can_hear(
+            self.pos, player.pos, player.noise, cost=world.sound_cost(self.pos)
+        )
         self.sees_player = see > 0.0
         self.hears_player = hear > 0.0
         dist = math.hypot(player.x - self.x, player.y - self.y)
@@ -283,6 +301,7 @@ class Enemy:
             # 明明隔着墙，它却能精确走到你站的那一格。听觉该给"大致方向"。
             if see > 0.0:
                 self._last_seen = (player.x, player.y)
+                self._seen_this_episode = True
             elif hear >= 0.18 and self._noise_lock <= 0.0:
                 guess = self._heard_point(player.pos, dist, world.grid)
                 if guess is not None:
@@ -308,6 +327,8 @@ class Enemy:
             self._path = None
             self._path_target = None
             self._path_failed_for = None
+            # 从"追"退到"查"是一个新的搜查行动：旧计划作废，进 investigate 时重排
+            self._clear_search_plan()
 
     # ============ 行为 1：已分配角色（协同追击） ============
     def _act_engage(self, bb) -> Status:
@@ -338,7 +359,7 @@ class Enemy:
         self._follow_path(self.target_tile, self._chase_speed() * 0.95, dt, world)
         return Status.SUCCESS
 
-    # ============ 行为 2：调查最后已知位置 ============
+    # ============ 行为 2：调查（GOAP 规划出来的搜查路线） ============
     def _act_investigate(self, bb) -> Status:
         world = bb.get("world")
         dt = bb.get("dt")
@@ -352,27 +373,88 @@ class Enemy:
 
         if self._last_seen is None:
             # 只有听觉线索、没有具体坐标：原地转头张望
-            self._scan(dt)
+            self._clear_search_plan()
+            if self._scan(dt):
+                self._give_up()
             return Status.SUCCESS
 
-        tx, ty = self._last_seen
         self._investigate_time += dt
         if self._investigate_time > C.INVESTIGATE_GIVEUP:
             self._give_up()
             return Status.SUCCESS
 
-        dist = math.hypot(tx - self.x, ty - self.y)
-        if dist < 1.0:
-            self._scan(dt)
-        else:
+        # 路线：查哪几处、先查哪个，由 GOAP 规划器按总脚程排（ai/search_plan.py）。
+        # 这里只负责执行，以及"计划失效了"（记忆点漂走）就重排。
+        if self._plan_is_stale():
+            self._make_search_plan(world)
+        if not self._search_steps:
+            # 周围没有值得搜的点：退化成原地环视一圈
+            if self._scan(dt):
+                self._give_up()
+            return Status.SUCCESS
+        if self._search_i >= len(self._search_steps):
+            self._give_up()   # 该查的都查过了，没找到人
+            return Status.SUCCESS
+
+        kind, tile = self._search_steps[self._search_i]
+        if kind == "move":
             status = self._follow_path(
-                (int(tx), int(ty)), self.speed * 1.25, dt, world
+                tile, self.speed * C.SEARCH_SPEED_MUL, dt, world
             )
-            if status == "unreachable":
-                # 那个位置在墙里或不可达（听觉线索猜出来的格子很常见）：
-                # 就地环视一圈再放弃，而不是顶着墙推满 INVESTIGATE_GIVEUP 秒
-                self._scan(dt)
+            if status == "arrived":
+                self._search_i += 1      # 到点了，下一步是这个点的 sweep
+            elif status == "unreachable":
+                # 那个位置在墙里或不可达（听觉/石子线索猜出来的格子很常见）：
+                # 连它后面跟着的"搜查"一起划掉，而不是站在原地对着墙环视
+                self._drop_step_point(self._search_i)
+        elif self._scan(dt, C.SEARCH_SWEEP_TIME):
+            self._search_i += 1
         return Status.SUCCESS
+
+    # ---- GOAP 搜索计划的辅助 ----
+    def _clear_search_plan(self) -> None:
+        self._search_steps = None
+        self._search_i = 0
+        self._search_origin = None
+        self._plan_saw = None
+
+    def _plan_is_stale(self) -> bool:
+        """没排过计划、记忆点漂走、或"看见过/只听到"这件事变了 → 该重排。"""
+        if not self._search_steps or self._search_origin is None:
+            return True
+        if self._plan_saw != self._seen_this_episode:
+            return True
+        return (
+            math.hypot(
+                self._last_seen[0] - self._search_origin[0],
+                self._last_seen[1] - self._search_origin[1],
+            )
+            > C.SEARCH_REPLAN_DIST
+        )
+
+    def _make_search_plan(self, world) -> None:
+        """找藏身点 + 排顺序。只在跟丢的那个瞬间跑一次，不进帧循环。
+
+        没真看见过人的（只听到脚步 / 被队友喊了一声）只查记忆点本身：
+        翻角落是有代价的（离岗、堵路），得由"差点抓到你"来换。
+        """
+        spots = (
+            find_hiding_spots(world.grid, self._last_seen)
+            if self._seen_this_episode
+            else []
+        )
+        self._search_steps = build_search_plan(self.pos, self._last_seen, spots)
+        self._search_i = 0
+        self._search_origin = self._last_seen
+        self._plan_saw = self._seen_this_episode
+
+    def _drop_step_point(self, idx: int) -> None:
+        """划掉第 idx 步所在的那个点：它的 move 和紧随其后的 sweep 一起删。"""
+        tile = self._search_steps[idx][1]
+        j = idx + 1
+        while j < len(self._search_steps) and self._search_steps[j][1] == tile:
+            j += 1
+        del self._search_steps[idx:j]
 
     def _heard_point(self, pos, dist: float, grid):
         """把"听到的脚步"换算成一个带偏差的坐标。
@@ -391,10 +473,16 @@ class Enemy:
                 return (tx, ty)
         return None
 
-    def _scan(self, dt: float) -> None:
-        """到达调查点后原地环视：左右摆动朝向，环视完还没结果就放弃。"""
+    def _scan(self, dt: float, duration: float = None) -> bool:
+        """原地环视：左右摆动朝向，视野锥跟着扫过去。
+
+        返回 True 表示这一轮看完了（调用方决定是"换下一个点"还是"放弃"）。
+        duration 可传：主点认真看一圈（LOOK_AROUND_TIME），
+        逐个藏身点看短一些（SEARCH_SWEEP_TIME），免得整套搜索拖十几秒。
+        """
+        span = C.LOOK_AROUND_TIME if duration is None else duration
         if self._look_timer <= 0.0:
-            self._look_timer = C.LOOK_AROUND_TIME
+            self._look_timer = span
         self._look_timer -= dt
         self.facing += self._scan_dir * dt * 2.4
         if self.facing > math.pi:
@@ -403,11 +491,10 @@ class Enemy:
         elif self.facing < -math.pi:
             self.facing += 2 * math.pi
             self._scan_dir = 1.0
-        if self._look_timer <= 0.0:
-            self._give_up()
+        return self._look_timer <= 0.0
 
     def _give_up(self) -> None:
-        """调查无果：清空记忆、把可疑度压到"起疑阈值"之下，回到巡逻。"""
+        """搜查无果：清空记忆、把可疑度压到"起疑阈值"之下，回到巡逻。"""
         self.searching = False
         self._last_seen = None
         self._investigate_time = 0.0
@@ -415,6 +502,8 @@ class Enemy:
         self._path = None
         self._path_target = None
         self._path_failed_for = None
+        self._clear_search_plan()
+        self._seen_this_episode = False
         self.suspicion = min(self.suspicion, C.SUSPICION_CURIOUS - 0.05)
 
     # ============ 行为 3：巡逻 ============

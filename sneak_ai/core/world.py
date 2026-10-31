@@ -7,6 +7,7 @@ from typing import Dict, List
 from .. import constants as C
 from ..ai.coordination import Role
 from ..entity.stone import Stone, plan_landing
+from ..perception.sound import SoundField
 from .grid import GridMap, WALL
 
 
@@ -386,6 +387,13 @@ class World:
     _alarm_cd: float = 0.0     # 报警广播节流
     _engaged_sig: tuple = ()   # 参与者集合签名（变化时强制重算角色）
 
+    # ---- 声音传播 ----
+    # 以玩家所在格为源的代价场。玩家每跨一格才需要重建，而一帧里
+    # 18 个哨兵都要查一次 —— 所以必须缓存，不能"每个敌人建一个场"。
+    _sound_field: object = None
+    _sound_tile: tuple = None
+    sound_builds: int = 0      # 累计建场次数（测试用它证明"没有逐帧重算"）
+
     def update(self, dt: float) -> None:
         # 结算状态：冻结世界更新，等待玩家操作
         if self.state in (C.STATE_VICTORY, C.STATE_DEFEAT):
@@ -497,7 +505,7 @@ class World:
             self._engaged_sig = sig
             self.coordinator.invalidate()
 
-        self.coordinator.assign(engaged, self.player.pos, self.grid)
+        self.coordinator.assign(engaged, self.player.pos, self.grid, now=self.elapsed)
         for e in engaged:
             # 缓存里没有这个敌人（刚参与、还没轮到重算）就先保持原角色
             item = self.coordinator.assignments.get(id(e))
@@ -881,17 +889,23 @@ class World:
         1. 只抬到"起疑"级别，绝不越过确认阈值 —— 听到不等于看到；
         2. 落点带定位误差 —— 声音只能给出"大概在那片"，哨兵得自己搜；
         3. 已经在追你的、或正看着你的哨兵不受影响 —— 视觉信息优先于听觉。
+
+        第四个约束是后来补的：**响动也要过地图**。原来这里按直线距离筛人，
+        隔着整片岩层扔颗石子，另一侧的哨兵也会跑过来 —— 玩家会以为
+        地图根本没有墙。现在用和脚步同一套代价场（`SoundField`），
+        一次性的，不参与逐帧循环。
         """
         self.pings.append({
             "x": x, "y": y, "r": radius,
             "age": 0.0, "life": C.STONE_PING_LIFE, "kind": kind,
         })
+        field = SoundField(self.grid, (x, y), radius)
         jit = C.STONE_INVESTIGATE_JITTER if jitter is None else jitter
         alerted = 0
         for e in self.enemies:
             if not e.alive or e.role != Role.PATROL or e.sees_player:
                 continue
-            d = math.hypot(e.x - x, e.y - y)
+            d = field.cost_at(e.pos)
             if d > radius:
                 continue
             fall = 1.0 - d / radius
@@ -917,6 +931,37 @@ class World:
             e._path_failed_for = None
             alerted += 1
         return alerted
+
+    # ---- 声音传播 ----
+    def _sound_limit(self) -> float:
+        """代价场展开到多远：敌人里最大的有效听觉半径，留一点余量。
+
+        上限跟着**实际配置**走而不是写死 C.HEAR_RANGE × 1.5：测试里经常
+        构造 `Perception(hear_range=12)` 的"大耳朵"哨兵，场要是只展开 7.5，
+        它们会以为自己聋了 —— 这种错不会报错，只会让断言莫名其妙。
+        """
+        limit = C.HEAR_RANGE * 1.5
+        for e in self.enemies:
+            p = getattr(e, "perception", None)
+            if p is not None:
+                limit = max(limit, p.hear_range * 1.5)
+        return limit
+
+    def sound_cost(self, pos) -> float:
+        """玩家脚下到 `pos` 的声音传播代价（格）；传不过去就是 inf。
+
+        缓存键是**玩家所在格**：玩家一帧可能只挪 0.1 格，但哨兵每帧都要问
+        一次，不缓存就等于每帧给 18 个人建一张图。
+        """
+        p = self.player
+        if p is None:
+            return math.inf
+        tile = (int(p.x), int(p.y))
+        if self._sound_field is None or self._sound_tile != tile:
+            self._sound_field = SoundField(self.grid, tile, self._sound_limit())
+            self._sound_tile = tile
+            self.sound_builds += 1
+        return self._sound_field.cost_at(pos)
 
     # ---- 反馈聚合 ----
     def _aggregate_threat(self) -> None:

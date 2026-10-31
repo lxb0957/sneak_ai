@@ -9,6 +9,9 @@
    边 = 一个动作，代价 = 动作 cost。启发式 = 未满足目标的数量。
 4. 为什么不会状态爆炸：GOAP 的动作数量通常很少（个位数到几十），
    且 A* 有剪枝；对比"穷举所有状态组合"是指数级，GOAP 把它变成可控的搜索。
+5. 每个动作是 STRIPS 的"加/删双列表"：effects 是加进去的谓词，
+   removes 是从状态里划掉的谓词。少了 removes，"位置"这种**互斥**谓词就没法表达
+   —— 人会同时站在所有去过的地方，规划器就能凭空瞬移（这个坑见下面的注释）。
 
 这是"决策 AI 三件套"里最"算法感"的一块，也是面试官最爱追问的。
 """
@@ -25,17 +28,22 @@ class Action:
         cost: float,
         preconditions: FrozenSet[str],
         effects: FrozenSet[str],
+        removes: FrozenSet[str] = frozenset(),
     ):
         self.name = name
         self.cost = cost
         self.preconditions = preconditions  # 必须全部满足才能执行
         self.effects = effects  # 执行后加入世界状态的谓词
+        # 执行后从状态里划掉的谓词（STRIPS 的 delete list）。
+        # 没有它就表达不了"位置"这种互斥谓词：`at_A` 一旦加上就永远成立，
+        # 于是"走到 B 之后还能在 A 处搜查"——规划器会给出瞬移的计划。
+        self.removes = removes
 
     def can_execute(self, state: FrozenSet[str]) -> bool:
         return self.preconditions <= state  # 前置条件是状态的子集
 
     def apply(self, state: FrozenSet[str]) -> FrozenSet[str]:
-        return state | self.effects
+        return (state | self.effects) - self.removes
 
     def __repr__(self):
         return f"Action({self.name})"
@@ -51,7 +59,13 @@ class Goal:
 
 
 def _heuristic(state: FrozenSet[str], goal: FrozenSet[str]) -> int:
-    """启发式：还差多少个目标谓词未满足。admissible（每步最多满足一个）。"""
+    """启发式：还差多少个目标谓词未满足。
+
+    admissible 的前提是"每个动作最多满足一个目标谓词"。本项目的动作都满足
+    （一次只标记一处搜完），所以 A* 给出的是最优长度/最低代价的计划；
+    如果将来出现"一个动作同时满足多个目标"的动作，这个下界会高估，
+    那时应改成"未满足数 / 单动作最大满足数"。
+    """
     return len(goal - state)
 
 

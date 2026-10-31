@@ -13,6 +13,7 @@ import pygame
 
 from .. import constants as C
 from ..core.grid import GridMap
+from ..perception.sound import hearing_range
 
 
 class Player:
@@ -61,14 +62,16 @@ class Player:
         return C.NOISE_WALK
 
     def noise_radius(self) -> float:
-        """当前能被听见的半径（格）—— 与 Perception.can_hear 用同一个公式。
+        """当前能被听见的半径（格）—— 与 `Perception.can_hear` 同一个公式。
 
         这个值直接画成角色周围的一圈虚线。玩家以前只能靠"被发现/没被发现"
         反推听觉机制；把半径画出来之后，"冲刺为什么等于报点"一眼就懂。
+
+        注意这是**空气里的最大传播距离**：中间隔了墙，声音会被削掉一截
+        （见 `perception/sound.py`）。画一个圆表示"我能喊多远"是对的，
+        画成"这一圈里的人都会听见"才不对。
         """
-        if self.noise <= C.NOISE_STILL:
-            return 0.0
-        return C.HEAR_RANGE * min(1.5, 0.55 + 0.6 * self.noise)
+        return hearing_range(C.HEAR_RANGE, self.noise)
 
     def can_throw(self) -> bool:
         return self.stones > 0 and self.stone_cd <= 0.0

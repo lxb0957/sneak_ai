@@ -74,17 +74,25 @@ class Coordinator:
         enemies: List[object],
         player_pos: Tuple[float, float],
         grid,
+        now: float = None,
     ) -> dict:
         """重新分配角色。返回 {id(enemy): (Role, (tx, ty) 或 None)}。
 
         注意：此方法可能被多个敌人每帧调用，但内部有节流（0.3s），
         真正重算只在节流窗口到点时执行一次，其余调用直接返回缓存。
+
+        `now` 必须传**模拟时间**（World 传 self.elapsed），不是墙钟。
+        第一版用的是 time.perf_counter()，后果是"同一份代码跑两遍结果不同"：
+        无窗口跑测试时一帧只要几毫秒，墙钟推进得比模拟时间慢得多，
+        节流窗口何时到点取决于当时的机器负载 —— 于是 botrun 在同样的输入下
+        时而通关时而被抓，`score_table` 的逐局对账也跟着飘。
+        决策逻辑一旦依赖真实时间，它就不再是可复现的模拟。
         """
         px, py = player_pos
         player_tile = (int(px), int(py))
 
         # 节流：非首次调用时，未到重算点直接返回缓存
-        now = _monotonic()
+        now = _monotonic() if now is None else now
         if self.assignments and (now - self._last_assign) < 0.3:
             return self.assignments
 

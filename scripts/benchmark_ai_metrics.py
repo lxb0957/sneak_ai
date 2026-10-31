@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pygame  # noqa: E402
 
+from sneak_ai import constants as C  # noqa: E402
 from sneak_ai.__main__ import Game  # noqa: E402
 
 
@@ -130,10 +131,16 @@ def metric_sneak_bypass(g, trials=30, max_frames=300):
     """玩家潜行从敌人背后绕过，全程不进入正面视野锥，测是否被听觉发现。
 
     绕后成功 = 从敌人背后（180° 背面）经过且不被发现。
+
+    **每轮必须重开一局**：上一个指标（捕获率）的最后一步是"玩家被抓住"，
+    世界停在 `STATE_DEFEAT`，而 `World.update` 在结算态直接 return ——
+    不重开的话 `update()` 一次都不会真正执行，`suspicion` 永远不涨，
+    100% 绕后成功就是这么"测"出来的：它测的是一个冻结的世界。
     """
     success = 0
-    grid = g.world.grid
     for _ in range(trials):
+        g._restart()
+        grid = g.world.grid
         enemy = g.world.enemies[0]
         enemy.patrol = []
         ex, ey = _nearest_walkable(grid, 8.0, 8.0)
@@ -152,6 +159,11 @@ def metric_sneak_bypass(g, trials=30, max_frames=300):
             if enemy.suspicion >= 0.7:
                 detected = True
                 break
+            if g.world.state != C.STATE_INFILTRATE:
+                # 被抓也算"没绕过去"：否则世界一冻结，suspicion 不再增长，
+                # 这一轮会被记成"绕后成功" —— 把失败记成成功是最坏的一种指标。
+                detected = True
+                break
             if g.player.y > ey + 3.0:
                 break
         if not detected:
@@ -160,11 +172,19 @@ def metric_sneak_bypass(g, trials=30, max_frames=300):
 
 
 def metric_dispersion(g, trials=20):
-    """追击时敌人空间分布的标准差（越大越分散，证明协同没挤成一团）。"""
+    """追击时敌人空间分布的标准差（越大越分散，证明协同没挤成一团）。
+
+    这条测的是**协同分配**，不是感知，所以每帧把参与者的可疑度钉在确认线以上：
+    否则测的其实是"他们多久跟丢一个站着不动的玩家"——玩家一旦离开视线，
+    可疑度按 0.22/秒衰减，1.9 秒后 8 个人里有 7 个回到巡逻，
+    `chasing < 2` 直接跳过，分散度算出 0.00（那看起来像"协同崩了"，
+    实际是"这一轮根本没人在追"）。感知有自己的指标，别混在一起测。
+    """
     dispersions = []
-    grid = g.world.grid
     for _ in range(trials):
-        # 让多个敌人追击
+        # 同样要重开：否则继承上一个指标留下的结算态，敌人一个都不会离开巡逻
+        g._restart()
+        grid = g.world.grid
         player = g.player
         cx, cy = _nearest_walkable(grid, 40.0, 28.0)
         player.x, player.y = cx, cy
@@ -176,6 +196,8 @@ def metric_dispersion(g, trials=20):
             e.facing = math.atan2(cy - e.y, cx - e.x)
             e.suspicion = 1.0
         for _ in range(120):
+            for e in g.world.enemies[:8]:
+                e.suspicion = 1.0        # 保持在"已确认发现"，只测协同的空间分配
             g.world.update(0.016)
 
         # 统计追击中敌人的位置散布
