@@ -4,6 +4,7 @@
 但"有记录可追"是玩家愿意再玩一局的最短路径。
 """
 
+import datetime
 import json
 import sys
 import tempfile
@@ -11,6 +12,10 @@ from pathlib import Path
 from typing import Optional
 
 from .. import constants as C
+
+# 时间戳格式与写入点共用同一个常量：写的是 "%Y-%m-%d %H:%M"，
+# 读的时候也按这个形状校验，两边各写一份字符串迟早会不一致。
+WHEN_FMT = "%Y-%m-%d %H:%M"
 
 # 允许测试覆盖（避免测试污染真实记录文件）
 RECORD_FILE: Optional[Path] = None
@@ -73,6 +78,40 @@ def _as_int(value, default: int = 0) -> int:
     return default
 
 
+def _as_when(value) -> str:
+    """把任意内容规整成时间戳字符串；不认识的形状一律当"没有"。
+
+    校验形状而不是原样透传，是因为这个字符串会**直接画到结算页上**：
+    存档被人手改过、或者将来字段被挪用作别的用途，屏幕上就会出现
+    "最佳纪录 创于 待定" 这种东西。长度 + 分隔符位置对得上才认。
+    """
+    if not isinstance(value, str):
+        return ""
+    s = value.strip()
+    if (len(s) == 16 and s[4] == "-" and s[7] == "-"
+            and s[10] == " " and s[13] == ":"):
+        return s
+    return ""
+
+
+def _mtime_when() -> str:
+    """老存档没有时间戳：用文件修改时间兜底。
+
+    `records.json` 只在**刷新最佳纪录**的那一处被写入（`submit()`），
+    所以它的 mtime 近似等于纪录诞生的时刻。这比在界面上显示"未知"有用，
+    也不必为了补一个字段去改写玩家的存档 —— 存档是唯一只属于他的东西，
+    能不动就不动。
+    """
+    try:
+        ts = path().stat().st_mtime
+    except OSError:
+        return ""
+    try:
+        return datetime.datetime.fromtimestamp(ts).strftime(WHEN_FMT)
+    except (OSError, OverflowError, ValueError):
+        return ""
+
+
 def load() -> dict:
     """读最佳记录。任何格式问题都当"没有记录"，绝不让坏存档挡住游戏。"""
     try:
@@ -109,7 +148,22 @@ def load() -> dict:
     else:
         clean["style"] = []
     clean["style_total"] = _as_int(data.get("style_total"), 0)
+    clean["when"] = _as_when(data.get("when"))
+    # 老版本存档没有 when 字段：用文件 mtime 补一个"大概是什么时候"。
+    # 只在真有成绩时补 —— 空存档不该在菜单上显示"最佳纪录 创于某时"。
+    if not clean["when"] and clean.get("score"):
+        clean["when"] = _mtime_when()
     return clean
+
+
+def when_label(best: dict) -> str:
+    """给界面用的时间短语（"创于 2026-10-31 15:52"）；没有就返回空串。
+
+    放在这里而不是让菜单和结算页各拼一遍：两处显示必须永远一致，
+    否则总有一天会变成"菜单写着 10-31、结算页写着 11-01"。
+    """
+    when = _as_when((best or {}).get("when"))
+    return f"创于 {when}" if when else ""
 
 
 def submit(record: dict) -> bool:

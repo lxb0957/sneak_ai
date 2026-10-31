@@ -1,6 +1,7 @@
 """世界：持有地图、玩家、敌人列表，驱动每帧更新。"""
 
 import math
+import time
 from dataclasses import dataclass, field
 from typing import Dict, List
 
@@ -9,6 +10,7 @@ from ..ai.coordination import Role
 from ..entity.stone import Stone, plan_landing
 from ..perception.sound import SoundField
 from .grid import GridMap, WALL
+from .records import WHEN_FMT
 
 
 def _flood_floor(m: GridMap, sx: int, sy: int) -> set:
@@ -1067,6 +1069,10 @@ class World:
             "spotted": self.spotted,
             "kills": self.kills,
             "rank": self.rank(),
+            # 记录诞生的本地时间：结算页和主菜单都要回答"这个纪录是什么时候的"，
+            # 否则玩家只看到一个分数，无从判断是不是自己刚刚刷出来的。
+            # 用本地时间而不是 UTC/时间戳：这个字符串只给人看，不做比较。
+            "when": time.strftime(WHEN_FMT),
             # 风格分明细也存下来：结算页和"最佳纪录"都能说清分数从哪来
             "style": [{"name": n, "value": v} for n, v in self.style_bonus()],
             "style_total": self.style_total(),

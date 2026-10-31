@@ -14,6 +14,7 @@ import math
 import pygame
 
 from .. import constants as C
+from . import records
 from .ui import TextCache, font
 
 _BG = (14, 16, 20)
@@ -60,6 +61,9 @@ class Menu:
             line = (f"最佳纪录  {self.best.get('score', 0)} 分 · "
                     f"{self.best.get('time', 0)} 秒 · "
                     f"{self.best.get('rank', '-')} 评级")
+            when = records.when_label(self.best)
+            if when:
+                line += f"  ·  {when}"
             best = self.tc.get("best", line, 18, (255, 215, 140))
             screen.blit(best, best.get_rect(center=(W // 2, H // 2 + 6)))
 

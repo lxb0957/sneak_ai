@@ -12,6 +12,7 @@ import pygame
 
 from .. import constants as C
 from ..ai.coordination import Role
+from . import records
 from .ui import TextCache, draw_bar, draw_panel, render
 
 
@@ -510,6 +511,11 @@ class HUD:
         if best:
             line = (f"最佳纪录  {best.get('score', 0)} 分  ·  "
                     f"{best.get('time', 0)} 秒  ·  {best.get('rank', '-')} 评级")
+            # 时间戳接在同一行末尾，不另起一行：底部这块是靠 nudge 往上挪才
+            # 不压底栏的，多插一行会连带把上面整组元素的间距算错。
+            when = records.when_label(best)
+            if when:
+                line += f"  ·  {when}"
             b = self.tc.get("end_best", line, 18, (255, 215, 140))
         else:
             # 不能用 "暂无最佳纪录"：这里要是把"暂无最佳纪录"当整行显示，

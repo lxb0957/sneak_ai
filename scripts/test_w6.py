@@ -224,9 +224,32 @@ def test_score_and_records():
             assert records.submit({"score": 400}) is False, "低分不应覆盖记录"
             assert records.submit({"score": 900}) is True
             assert records.load()["score"] == 900
+
+            # ---- 时间戳：玩家要能看出这个纪录是哪天创下的 ----
+            # 1) 本局 record() 自带 when，且格式能被识别（形状校验，不是非空就行）
+            stamp = world.record()["when"]
+            assert records._as_when(stamp) == stamp, f"时间戳格式不对：{stamp!r}"
+            assert len(stamp) == 16 and stamp[4] == "-" and stamp[13] == ":"
+            # 2) 写进存档、读得回来、能拼成界面要的那句
+            assert records.submit(dict(world.record(), score=1200)) is True
+            best = records.load()
+            assert best["when"] == stamp, "时间戳没被存下来"
+            assert records.when_label(best) == f"创于 {stamp}"
+            # 3) 垃圾值不能画到屏幕上
+            assert records._as_when("昨天") == ""
+            assert records._as_when(None) == ""
+            assert records.when_label({"score": 1}) == ""
+
+            # 4) 老存档没有 when：用文件 mtime 兜底，而不是显示"未知"
+            records.RECORD_FILE.write_text(
+                '{"score": 700, "time": 50, "rank": "A"}', encoding="utf-8")
+            legacy = records.load()
+            assert legacy["score"] == 700
+            assert legacy["when"], "老存档应能推出一个时间戳"
+            assert records.when_label(legacy).startswith("创于 20")
         finally:
             records.RECORD_FILE = None
-    print("[OK] 计分 / 评级 / 最佳记录持久化正确")
+    print("[OK] 计分 / 评级 / 最佳记录持久化（含时间戳）正确")
 
 
 # ---------------------------------------------------------------- 渲染
