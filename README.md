@@ -139,6 +139,10 @@ Selector
 
 两关是**一次连续行动**：用时、被发现、击倒、剩余弹药跨关延续，最后一关打完才结算成绩与评级；评级基准按"已打的关数"累计（两关 S 线 135 秒），否则越往后越容易拿 S。中途失败只重开**当前关**，但已经耗掉的时间留着 —— 罚时间、不罚进度。
 
+![环形枢纽实跑](assets/ring_demo.png)
+
+*(两张都是引擎实跑帧（`scripts/shoot.py --level 1`）：左 = 第 10 秒，机器人走到外环南廊 `(35,52)`，前方 4 格宽的走廊一眼望穿；右 = 第 26 秒，已经进到金库内圈、贴着终端 `(52,25)`。整局 46.4 秒、被发现 2 次、920 分 A 评级。)*
+
 ### 第二关是机器人"审"出来的
 
 这张图的第一版在纸面上看没问题：环、辐条、金库、8 道闸全对，连通性校验、门宽校验、最小割全部通过。然后把测试机器人放进去，连读三次死在同一格。三个问题都不是"看起来不对"能发现的：
@@ -549,6 +553,7 @@ python scripts/diag_patrol.py 180        # 巡逻体检：谁卡墙、最长原�
 python scripts/botrun.py --aware        # 机器人纯潜行通关（能赢就是"关卡有解"的证明）
 python scripts/botrun.py --aware --level 1          # 指定关卡（0=哨站 1=环形枢纽）
 python scripts/botrun.py --aware --armed --runs 3   # 允许开枪的对照（买时间要付分）
+python scripts/shoot.py --level 1 --at 10,26        # 给某一关拍实跑截图（同一条渲染路径）
 python scripts/benchmark_pathing.py     # 寻路性能对比（每档 3 轮取最小值）
 python scripts/benchmark_ai_metrics.py  # AI 行为指标统计
 python scripts/make_charts.py           # 生成图表
