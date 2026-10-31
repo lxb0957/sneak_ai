@@ -139,6 +139,10 @@ Selector
 
 两关是**一次连续行动**：用时、被发现、击倒、剩余弹药跨关延续，最后一关打完才结算成绩与评级；评级基准按"已打的关数"累计（两关 S 线 135 秒），否则越往后越容易拿 S。中途失败只重开**当前关**，但已经耗掉的时间留着 —— 罚时间、不罚进度。
 
+![环形枢纽全图](assets/level2_map.png)
+
+*(整张图俯视（`scripts/make_level_map.py` 烘的就是引擎自己那份地图数据）：一圈 4 格宽的外环、8 道闸把它切成 8 段，四条 2 格宽的辐条通向中央 16×16 的金库，金库正中是数据终端。白点是出生点，绿点是终端，蓝点是撤离点 —— 注意出生和撤离在同一角：你从西侧进，还得从西侧出。)*
+
 ![环形枢纽实跑](assets/demo_lv2.gif)
 
 *(第二关的实跑录像，同样一帧没摆拍：`python scripts/record_demo.py --level 1` 直接调 `botrun.run()`，46.4 秒、被发现 2 次、一枪没开、920 分 A 评级。第 10 秒它在 4 格宽的外环南廊上，第 26 秒已经穿进金库内圈贴上终端。)*
@@ -554,6 +558,7 @@ python scripts/botrun.py --aware        # 机器人纯潜行通关（能赢就�
 python scripts/botrun.py --aware --level 1          # 指定关卡（0=哨站 1=环形枢纽）
 python scripts/botrun.py --aware --armed --runs 3   # 允许开枪的对照（买时间要付分）
 python scripts/shoot.py --level 1 --at 10,26        # 给某一关拍实跑截图（同一条渲染路径）
+python scripts/make_level_map.py --level 1          # 把一关烘成整张俯视图（带目标点/补给标记）
 python scripts/benchmark_pathing.py     # 寻路性能对比（每档 3 轮取最小值）
 python scripts/benchmark_ai_metrics.py  # AI 行为指标统计
 python scripts/make_charts.py           # 生成图表
