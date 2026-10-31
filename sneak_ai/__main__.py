@@ -223,20 +223,35 @@ class Game:
 
     def run(self) -> None:
         while self.running:
-            dt = self.clock.tick(C.FPS) / 1000.0
-            dt = min(dt, 0.05)
-            self._time_accum += dt
+            dt = min(self.clock.tick(C.FPS) / 1000.0, 0.05)
             if self.menu.active:
                 self._handle_menu_events()
                 self._render_menu()
                 continue
-            self._handle_events()
+            self.step(dt)
+        pygame.quit()
+
+    def step(self, dt: float) -> None:
+        """推进一帧游戏（不含菜单）。
+
+        单独抽出来是为了可测。过场计时这类"只在主循环里走"的状态机最容易漏：
+        第一版把 _next_timer 设成 1.6 却**没有任何地方递减它**，通关卡片就永久
+        停住、输入被吞、永远进不了第二关 —— 而机器人测试只在"胜利"那一刻断言，
+        根本走不到这段代码。现在测试可以直接喂 dt 驱动它。
+        """
+        self._time_accum += dt
+        self._handle_events()
+        # 过场期间世界冻结：卡片上那 1.6 秒不该算进玩家用时
+        if self._next_timer <= 0:
             self.world.update(dt)
             self._update_tips(dt)
             self._handle_audio(dt)
             self._handle_scoring()
-            self._render(dt)
-        pygame.quit()
+        if self._next_timer > 0:
+            self._next_timer -= dt
+            if self._next_timer <= 0:
+                self._advance_level()
+        self._render(dt)
 
     # ============ 主菜单 ============
     def _handle_menu_events(self) -> None:
