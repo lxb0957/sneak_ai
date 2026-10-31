@@ -322,7 +322,8 @@ def _plan_detour(w, p, path, pi, danger, max_off=2.0):
 
 
 def run(aware=True, immune=False, budget=200.0, weight=7.0, verbose=False,
-        flee_mode="goal", game=None, on_frame=None, armed=False, loot=False):
+        flee_mode="goal", game=None, on_frame=None, armed=False, loot=False,
+        level=0):
     """loot=False 时机器人完全无视补给 —— 这是**测量基线**。
 
     为什么默认关：机器人是量化关卡难度的尺子，尺子本身不能随着被测物一起变。
@@ -335,12 +336,20 @@ def run(aware=True, immune=False, budget=200.0, weight=7.0, verbose=False,
     才谈得上"这段录像不是摆拍"。
     """
     g = game or Game()
+    if game is None and level:
+        # 只测单关：直接切到第 level 关重建世界，跨关统计清空。
+        # 不这么做的话，机器人赢了第 1 关会触发关卡推进，测量对象就跑偏了。
+        g.level_index = level
+        g._carry = {}
+        g._new_world()
     w, p = g.world, g.player
 
     def goal():
+        # 目标点读关卡实例（world.terminal / world.exfil），
+        # 不是 constants 的全局常量 —— 后者永远是第 1 关的坐标。
         if w.state == C.STATE_INFILTRATE:
-            return (int(C.DATA_TERMINAL[0]), int(C.DATA_TERMINAL[1]))
-        return (int(C.EXFIL_POINT[0]), int(C.EXFIL_POINT[1]))
+            return (int(w.terminal[0]), int(w.terminal[1]))
+        return (int(w.exfil[0]), int(w.exfil[1]))
 
     target = goal()
     danger = _danger_map(w)
@@ -544,6 +553,8 @@ if __name__ == "__main__":
     ap.add_argument("--loot", action="store_true",
                     help="让机器人顺路捡补给（默认关闭：基线测量不受补给影响）")
     ap.add_argument("--runs", type=int, default=1)
+    ap.add_argument("--level", type=int, default=0,
+                    help="关卡序号（0=哨站 1=环形枢纽），默认第 1 关")
     ap.add_argument("--weight", type=float, default=7.0)
     ap.add_argument("--flee-mode", default="goal", choices=["goal", "cover"])
     ap.add_argument("-v", "--verbose", action="store_true")
@@ -552,7 +563,7 @@ if __name__ == "__main__":
     results = []
     for _ in range(a.runs):
         r = run(aware=not a.dumb, immune=a.immune, weight=a.weight, verbose=a.verbose,
-                flee_mode=a.flee_mode, armed=a.armed, loot=a.loot)
+                flee_mode=a.flee_mode, armed=a.armed, loot=a.loot, level=a.level)
         results.append(r)
         print(r)
     if a.runs > 1:

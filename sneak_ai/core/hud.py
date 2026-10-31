@@ -13,6 +13,7 @@ import pygame
 from .. import constants as C
 from ..ai.coordination import Role
 from . import records
+from . import levels as L
 from .ui import TextCache, draw_bar, draw_panel, render
 
 
@@ -50,10 +51,14 @@ class HUD:
         box = pygame.Rect(12, 12, 322, 128)
         draw_panel(screen, box, alpha=185)
 
+        # 关卡号并进目标行，不另起一行：状态面板是定高的（12,12,322,128），
+        # 四行已经排满，加第五行要么压到下面的"尸体已暴露"，要么整块重排。
+        # 前缀只有"第N关｜"四个多字，20px 字号下约 70px，放得下。
+        tag = f"第{world.level_index + 1}关｜" if world.level_name else "目标："
         if world.state == C.STATE_INFILTRATE:
-            goal, gcol = "目标：潜入数据终端", C.COL_TERMINAL
+            goal, gcol = tag + "潜入数据终端", C.COL_TERMINAL
         else:
-            goal, gcol = "目标：返回撤离点", C.COL_EXFIL
+            goal, gcol = tag + "返回撤离点", C.COL_EXFIL
         screen.blit(
             self.tc.get("goal", goal, 20, gcol, bold=True), (26, 22)
         )
@@ -516,6 +521,9 @@ class HUD:
             when = records.when_label(best)
             if when:
                 line += f"  ·  {when}"
+            legacy = records.legacy_label(best, len(L.LEVELS))
+            if legacy:
+                line += f"  ·  {legacy}"
             b = self.tc.get("end_best", line, 18, (255, 215, 140))
         else:
             # 不能用 "暂无最佳纪录"：这里要是把"暂无最佳纪录"当整行显示，

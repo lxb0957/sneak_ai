@@ -31,6 +31,7 @@ from . import constants as C
 from .ai.coordination import Coordinator
 from .audio.sfx import SFX
 from .core import records
+from .core import levels as L
 from .core.camera import Camera
 from .core.hud import HUD
 from .core.mapview import MapView
@@ -130,26 +131,95 @@ class Game:
         self._tips_shown: set = set()   # 本会话已提示过的资源类型
         self._show_intro = False        # 从菜单开局的第一条引导
 
+        # ---- 关卡推进 ----
+        self.level_index = 0
+        self._carry: dict = {}       # 跨关延续的统计（见 _snapshot_carry）
+        self._next_timer = 0.0       # 过关过场剩余时间（>0 表示正在过场）
+        self._clear_veil = None      # 过场遮罩（惰性创建，别每帧分配全屏 Surface）
+
         self._new_world()
         self.running = True
 
     # ============ 世界构建 ============
     def _new_world(self) -> None:
-        """（重）建一局：地图、玩家、敌人、静态地图烘焙。"""
-        self.world = World(build_demo_map())
+        """按当前关卡重建世界：地图、玩家、敌人、静态地图烘焙。
+
+        多关之后这里多了两件事：
+        1. 目标点 / 评级基准从关卡数据里读，不再用全局常量；
+        2. 把上一关带过来的统计（用时、被发现、击倒、剩余弹药）灌进新世界。
+           不灌的话，第二关的结算页会显示"用时 40 秒"——只算了第二关，
+           而玩家明明已经打了两关。
+        """
+        lv = L.LEVELS[self.level_index]
+        grid = lv.build()
+        self.world = World(grid)
+        self.world.level_index = lv.idx
+        self.world.level_name = lv.name
+        self.world.terminal = lv.terminal
+        self.world.exfil = lv.exfil
+        # 评级基准按"累计"算：跑到第 2 关时，允许的时间是两关之和。
+        # 只比较单关用时的话，越往后越容易拿 S，评级就没有意义了。
+        self.world.par = L.cumulative_par(self.level_index)
         self.world.coordinator = Coordinator(self.world.grid)
         self.mapview = MapView(self.world.grid)
         self.minimap = Minimap(self.world.grid)
 
-        player_spawn, enemy_cfg = build_spawn_and_patrols(self.world.grid)
+        player_spawn, enemy_cfg = L.spawn_and_patrols(lv, self.world.grid)
         self.player = Player(player_spawn[0], player_spawn[1])
         self.world.player = self.player
         self.world.enemies = [
             Enemy(x, y, patrol=pts, perception=self.perception)
             for (x, y, pts) in enemy_cfg
         ]
-        self.world.pickups = build_pickups(self.world.grid)
+        self.world.pickups = L.level_pickups(lv, self.world.grid)
+        self._apply_carry()
         self.cam.follow(self.player.x, self.player.y)  # 开局直接对准，不要平滑漂移
+
+    # ---- 跨关延续 ----
+    # 只带"这一局已经付出去的代价"，不带"这一关的现场状态"。
+    # 弹药/石子要带：它是玩家前一关省下来的资源，不带就等于每关重置，
+    # "为下一关留两发子弹"这个决策会直接消失。
+    _CARRY_COUNTERS = ("spotted", "kills", "bodies_found", "decoy_hits",
+                       "shield_kills")
+
+    def _apply_carry(self) -> None:
+        c = self._carry
+        if not c:
+            return
+        self.world.elapsed = c.get("elapsed", 0.0)
+        for name in self._CARRY_COUNTERS:
+            setattr(self.world, name, c.get(name, 0))
+        self.world.peak_threat = c.get("peak_threat", 0.0)
+        self.world.spots_by_enemy = dict(c.get("spots_by_enemy", {}))
+        self.player.ammo = c.get("ammo", self.player.ammo)
+        self.player.stones = c.get("stones", self.player.stones)
+        self.player.shield = c.get("shield", 0)
+
+    def _snapshot_carry(self) -> dict:
+        w = self.world
+        c = {
+            "elapsed": w.elapsed,
+            "peak_threat": w.peak_threat,
+            "spots_by_enemy": dict(w.spots_by_enemy),
+            "ammo": self.player.ammo,
+            "stones": self.player.stones,
+            "shield": self.player.shield,
+        }
+        for name in self._CARRY_COUNTERS:
+            c[name] = getattr(w, name, 0)
+        return c
+
+    def _advance_level(self) -> None:
+        """过关过场结束 → 进下一关。"""
+        self._next_timer = 0.0
+        self._carry = self._snapshot_carry()
+        self.level_index += 1
+        self._new_world()
+        self._scored = False
+        self._step_acc = 0.0
+        self._prev_stamina = C.STAMINA_MAX
+        self._tips_shown = set()
+        self._show_intro = True
 
     def run(self) -> None:
         while self.running:
@@ -179,14 +249,27 @@ class Game:
                     self._on_menu_start()
 
     def _to_menu(self) -> None:
-        """回主菜单：刷新最佳纪录，下次开局是一局新的。"""
+        """回主菜单：刷新最佳纪录，下次开局是一局新的。
+
+        中途 ESC 退出等于放弃这一局，所以关卡进度一起清掉 ——
+        否则从菜单再开局会接着打第 2 关，而分数和时间对不上。
+        """
         self.menu.best = records.load()
         self.menu.active = True
         self.hud._tip_left = 0.0
+        self.level_index = 0
+        self._carry = {}
+        self._next_timer = 0.0
+
+    def _restart_run(self) -> None:
+        """整局重来：回到第 1 关，跨关统计清零。"""
+        self.level_index = 0
+        self._carry = {}
+        self._restart()
 
     def _on_menu_start(self) -> None:
         """从菜单进入游戏：一局新的，并给开局引导。"""
-        self._restart()
+        self._restart_run()
         self._tips_shown = set()
         self._show_intro = True
 
@@ -201,8 +284,13 @@ class Game:
             return
         if self._show_intro:
             self._show_intro = False
-            self.hud.show_tip("前往绿色标记的数据终端 —— 蹲下（Shift）移动更安静",
-                              life=5.0)
+            if self.level_index == 0:
+                msg = "前往绿色标记的数据终端 —— 蹲下（Shift）移动更安静"
+            else:
+                # 第二关起不重复基础教学，改成一句"这张图想让你紧张什么"。
+                lv = L.LEVELS[self.level_index]
+                msg = f"第 {lv.idx + 1} 关 · {lv.name}　{lv.subtitle}"
+            self.hud.show_tip(msg, life=5.0)
         p = self.world.player
         TIPS = {
             "ammo": "弹药包：走近自动补 2 发（上限 8）",
@@ -232,10 +320,16 @@ class Game:
                 elif ev.key == pygame.K_m:
                     self.sfx.toggle_mute()
                     settings.save(self.sfx.muted)
-                # 结算画面：R 重开
+                # 结算画面：R 重开。失败 = 重来本关（罚时间不罚进度），
+                # 通关 = 整局重来（回到第 1 关）。
                 if self.world.state in (C.STATE_VICTORY, C.STATE_DEFEAT):
+                    if self._next_timer > 0:
+                        continue          # 过关过场中不接受输入
                     if ev.key == pygame.K_r:
-                        self._restart()
+                        if self.world.state == C.STATE_DEFEAT:
+                            self._retry_level()
+                        else:
+                            self._restart_run()
                     continue
                 # 投石：Q 朝当前朝向扔（鼠标右键可以瞄准具体位置）
                 if ev.key == pygame.K_q:
@@ -275,6 +369,19 @@ class Game:
         self._scored = False
         self.new_record = False
         self._prev_stamina = C.STAMINA_MAX
+        self._next_timer = 0.0
+
+    def _retry_level(self) -> None:
+        """失败后重来：从**本关开头**重开，但把已经耗掉的时间留着。
+
+        为什么不整局重来：三关连着打，死在最后一关前面就被踢回第一关，
+        玩家只会关掉游戏。为什么不连时间一起回滚：那样"死一次"没有任何代价，
+        慢慢磨就能拿 S，"潜行"就退化成"试错"。
+        所以罚时间、不罚进度 —— 这是唯一同时满足这两条的解法。
+        """
+        self._carry = dict(self._carry)
+        self._carry["elapsed"] = self.world.elapsed
+        self._restart()
 
     # ============ 音效 ============
     def _handle_audio(self, dt: float) -> None:
@@ -328,11 +435,17 @@ class Game:
 
     # ============ 结算 ============
     def _handle_scoring(self) -> None:
-        if self.world.state == C.STATE_VICTORY and not self._scored:
-            self._scored = True
-            self.new_record = records.submit(self.world.record())
-            self.best = records.load()
-            self.player.clear_keys()
+        if self.world.state != C.STATE_VICTORY or self._scored:
+            return
+        self._scored = True
+        self.player.clear_keys()
+        # 还有下一关：只放一段过场，不结算。结算页是"一局结束"的界面，
+        # 半路弹出来会把"三关是一次行动"切碎成三段互不相干的小局。
+        if self.level_index + 1 < len(L.LEVELS):
+            self._next_timer = 1.6
+            return
+        self.new_record = records.submit(self.world.record())
+        self.best = records.load()
 
     # ============ 渲染 ============
     def _render(self, dt: float = 1 / 60.0) -> None:
@@ -365,10 +478,48 @@ class Game:
         self.hud.draw(screen, self.world, self.player, self._time_accum, dt,
                       self.sfx.muted)
 
-        if self.world.state in (C.STATE_VICTORY, C.STATE_DEFEAT):
+        # 过关过场优先于结算页：多关模式下，"一关打完"不是"一局打完"，
+        # 半路弹出结算页会把一次连续行动切成三段互不相干的小局。
+        if self._next_timer > 0:
+            self._draw_level_clear(screen)
+        elif self.world.state in (C.STATE_VICTORY, C.STATE_DEFEAT):
             self.hud.draw_end(screen, self.world, self.best, self.new_record,
                               self._time_accum)
         pygame.display.flip()
+
+    def _draw_level_clear(self, screen) -> None:
+        """过关过场：1.6 秒的静态卡片。
+
+        刻意不做"结算页的简化版"——没有分数、没有评级，只有"你过了"和
+        "下一关是什么"。分数是整局结束才算的账，中途算账会让人以为在打小关。
+        """
+        if self._clear_veil is None:
+            self._clear_veil = pygame.Surface((C.WINDOW_W, C.WINDOW_H))
+            self._clear_veil.fill((6, 8, 12))
+        t = max(0.0, 1.6 - self._next_timer)
+        # 淡入 0.3 秒：硬切会让玩家以为程序卡了一下
+        self._clear_veil.set_alpha(int(200 * min(1.0, t / 0.3)))
+        screen.blit(self._clear_veil, (0, 0))
+
+        lv = L.LEVELS[self.level_index]
+        cx, cy = C.WINDOW_W // 2, C.WINDOW_H // 2
+        title = self.hud.tc.get("lv_done", f"第 {lv.idx + 1} 关完成",
+                                46, (120, 240, 190), bold=True)
+        screen.blit(title, title.get_rect(center=(cx, cy - 54)))
+
+        if self.level_index + 1 < len(L.LEVELS):
+            nxt = L.LEVELS[self.level_index + 1]
+            sub = self.hud.tc.get("lv_next", f"下一关 · {nxt.name}",
+                                  26, C.COL_TEXT, bold=True)
+            screen.blit(sub, sub.get_rect(center=(cx, cy + 6)))
+            note = self.hud.tc.get("lv_note", nxt.subtitle, 17, C.COL_TEXT_DIM)
+            screen.blit(note, note.get_rect(center=(cx, cy + 42)))
+
+        line = (f"累计用时 {self.world.elapsed:.1f} 秒    "
+                f"被发现 {self.world.spotted} 次    "
+                f"弹药 {self.player.ammo} · 石子 {self.player.stones}")
+        tail = self.hud.tc.get("lv_time", line, 17, (255, 215, 140))
+        screen.blit(tail, tail.get_rect(center=(cx, cy + 84)))
 
     def _pulse(self) -> float:
         return 0.5 + 0.5 * math.sin(self._time_accum * 2.5)
@@ -386,14 +537,14 @@ class Game:
     # ============ 目标点 ============
     def _draw_goals(self) -> None:
         pulse = self._pulse()
-        # 数据终端：仅潜入阶段显示
+        # 数据终端：仅潜入阶段显示。坐标随关卡走（world.terminal）。
         if self.world.state == C.STATE_INFILTRATE:
-            tx, ty = C.DATA_TERMINAL
+            tx, ty = self.world.terminal
             sx, sy = self.cam.world_to_screen(tx, ty)
             self.px.draw_goal(self.screen, int(sx), int(sy), "terminal", pulse)
         # 撤离点：逃脱阶段显示（拿数据后高亮）
         if self.world.state == C.STATE_EXFILTRATE:
-            tx, ty = C.EXFIL_POINT
+            tx, ty = self.world.exfil
             sx, sy = self.cam.world_to_screen(tx, ty)
             self.px.draw_goal(self.screen, int(sx), int(sy), "exit", pulse,
                               has_data=self.world.has_data)

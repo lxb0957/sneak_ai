@@ -153,7 +153,24 @@ def load() -> dict:
     # 只在真有成绩时补 —— 空存档不该在菜单上显示"最佳纪录 创于某时"。
     if not clean["when"] and clean.get("score"):
         clean["when"] = _mtime_when()
+    # 这条纪录是跑了几关的成绩。单关时代的存档没有这个字段（读到 0），
+    # 而"一关 97 秒 / 612 分"和"两关 121 秒 / 800 分"根本不是一个项目，
+    # 摆在一起比会让人以为打多了反而变差。界面据此加一句"旧版"，不改存档。
+    clean["levels"] = _as_int(data.get("levels"), 0)
+    # 老存档没有这个字段 —— 而"没有这个字段"只可能来自单关时代（那时游戏只有一关），
+    # 所以缺失等于 1，而不是"未知"。不补这一条的话，玩家那份 612 分的旧纪录
+    # 会带着"看起来和两关成绩同一量级"的样子继续挂在菜单上。
+    if not clean["levels"] and clean.get("score"):
+        clean["levels"] = 1
     return clean
+
+
+def legacy_label(best: dict, total_levels: int) -> str:
+    """纪录是不是"不同关卡数"时代的产物；是就返回一句说明，否则空串。"""
+    n = _as_int((best or {}).get("levels"), 0)
+    if not n or n == total_levels:
+        return ""
+    return f"旧版 {n} 关"
 
 
 def when_label(best: dict) -> str:

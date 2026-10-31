@@ -15,6 +15,7 @@ import pygame
 
 from .. import constants as C
 from . import records
+from . import levels as L
 from .ui import TextCache, font
 
 _BG = (14, 16, 20)
@@ -53,7 +54,10 @@ class Menu:
         sub = self.tc.get("sub", "STEALTH PROTOCOL", 17, _FAINT)
         screen.blit(sub, sub.get_rect(center=(W // 2, H // 2 - 74)))
 
-        desc = self.tc.get("desc", "潜入数据终端，拿到数据，活着回来。", 19, _DIM)
+        # 关卡数从注册表里读，不写死 —— 加第三关时这里不该改。
+        n = len(L.LEVELS)
+        desc = self.tc.get("desc", f"连续潜入 {n} 处设施，拿到数据，活着回来。",
+                           19, _DIM)
         screen.blit(desc, desc.get_rect(center=(W // 2, H // 2 - 30)))
 
         # 最佳纪录：有就展示，给"能通关"的暗示；没有就不占地方
@@ -64,6 +68,9 @@ class Menu:
             when = records.when_label(self.best)
             if when:
                 line += f"  ·  {when}"
+            legacy = records.legacy_label(self.best, n)
+            if legacy:
+                line += f"  ·  {legacy}"
             best = self.tc.get("best", line, 18, (255, 215, 140))
             screen.blit(best, best.get_rect(center=(W // 2, H // 2 + 6)))
 

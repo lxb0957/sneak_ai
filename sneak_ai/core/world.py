@@ -1,4 +1,10 @@
-"""世界：持有地图、玩家、敌人列表，驱动每帧更新。"""
+"""世界：持有地图、玩家、敌人列表，驱动每帧更新。
+
+关卡数据（地图 / 巡逻 / 补给 / 门 / 目标点）从 W17 起搬到 `core/levels.py`：
+`World` 只关心"这一帧模拟成什么样"，不关心"这一关长什么样"。
+下面那层兼容包装是给十几个仍在 `import build_demo_map` 的脚本用的，
+新代码请直接用 `levels.LEVELS`。
+"""
 
 import math
 import time
@@ -10,336 +16,38 @@ from ..ai.coordination import Role
 from ..entity.stone import Stone, plan_landing
 from ..perception.sound import SoundField
 from .grid import GridMap, WALL
+from .levels import (DOORS, LEVELS, PICKUPS, level_pickups, spawn_and_patrols)
 from .records import WHEN_FMT
 
 
-def _flood_floor(m: GridMap, sx: int, sy: int) -> set:
-    """从 (sx, sy) 出发在可走格上做 BFS，返回可达格集合。"""
-    seen = {(sx, sy)}
-    stack = [(sx, sy)]
-    while stack:
-        x, y = stack.pop()
-        for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
-            if (nx, ny) in seen or m.is_wall(nx, ny):
-                continue
-            seen.add((nx, ny))
-            stack.append((nx, ny))
-    return seen
-
-
-def _carve(m: GridMap, x0: int, y0: int, x1: int, y1: int) -> None:
-    """把一块矩形从岩体里挖空（闭区间）。"""
-    for y in range(y0, y1 + 1):
-        for x in range(x0, x1 + 1):
-            m.set_floor(x, y)
-
-
-def _add_cover(m: GridMap, blocks, spawn, protected=()) -> list:
-    """往已经挖好的房间里放柱子 / 货箱，边放边做可达性校验。
-
-    为什么必须校验：一块 2x3 的货箱如果正好卡在小房间的转折处，
-    整个房间会被切成两半 —— 玩家过不去，敌人的 A* 也会失效，
-    而这种"看起来没事"的关卡 bug 只能靠 flood fill 兜住。
-    """
-    placed = []
-    prot = set(protected)
-    for (bx, by, bw, bh) in blocks:
-        cells = [(bx + dx, by + dy) for dx in range(bw) for dy in range(bh)]
-        if any(m.is_wall(cx, cy) for cx, cy in cells):
-            continue   # 已经有墙/柱子了，叠上去没意义
-        if any((cx, cy) in prot for cx, cy in cells):
-            continue   # 门口、目标点周围必须保持畅通
-        for cx, cy in cells:
-            m.set_wall(cx, cy)
-        reach = _flood_floor(m, int(spawn[0]), int(spawn[1]))
-        total = sum(1 for y in range(m.h) for x in range(m.w) if not m.is_wall(x, y))
-        if len(reach) < total:
-            for cx, cy in cells:
-                m.set_floor(cx, cy)
-            continue
-        placed.append((bx, by, bw, bh))
-    return placed
-
-
-# 关卡的门（每道 2 格宽）。抽出来当模块常量，是因为它有三个消费者：
-# 地图构建器用它挖洞、审计脚本用它算拓扑、难度体检用它统计"门窗口"。
-# 一份数据三处用，才不会出现"审计说 20 道门、地图其实有 22 道"这种对不上号。
-#
-# 每条 = (x0, y0, x1, y1, 名字, 所属弧)
-# 所属弧用来定价取舍：北弧近而密、南弧远而疏、X1 是捷径。
-DOORS = (
-    (11, 5, 11, 6, "S 东门", "北弧"),
-    (21, 5, 21, 6, "G1 西门", "北弧"),
-    (34, 5, 34, 6, "G1 东门", "北弧"),
-    (41, 5, 41, 6, "G2 西门", "北弧"),
-    (46, 17, 47, 17, "G2 南门", "北弧"),
-    (46, 26, 47, 26, "G3 北门", "北弧"),
-    (53, 30, 53, 31, "G3 东门", "北弧"),
-    (63, 30, 63, 31, "G4 西门", "北弧"),
-    (68, 36, 69, 36, "G4 南门", "北弧"),
-    (68, 46, 69, 46, "T 北门", "北弧"),
-    (5, 11, 6, 11, "S 南门", "南弧"),
-    (5, 31, 6, 31, "G5 北门", "南弧"),
-    (18, 38, 18, 39, "G5 东门", "南弧"),
-    (31, 38, 31, 39, "G6 西门", "南弧"),
-    (46, 40, 46, 41, "G6 东门", "南弧"),
-    (56, 40, 56, 41, "G7 西门", "南弧"),
-    (61, 49, 62, 49, "G7 南门", "南弧"),
-    (67, 50, 67, 51, "T 西门", "南弧"),
-    (24, 14, 25, 14, "X1 上口", "捷径"),
-    (24, 37, 25, 37, "X1 下口", "捷径"),
-)
-
-
+# ---- 兼容层：第 1 关的老名字 ----
+# 这些名字被 14 个测试脚本和 4 个审计脚本引用着。改名一次要动 18 个文件、
+# 每个都得重新跑一遍才知道有没有写错，收益为零 —— 留着，只加注释。
 def build_demo_map() -> GridMap:
-    """生成 80x60 的"哨站"关卡：实心岩体里挖出来的 θ 形设施。
-
-    ⚠️ 这是一次**结构反转**的改动，值得说清楚为什么：
-
-    旧版是"一大块空地 + 往里摆墙/货箱"。问题在于玩家永远可以在空地里贴边走，
-    视锥再密也只是"绕远一点"，路线选择实际上是几十条，难度全靠堆敌人。
-    这次改成先填满岩体，再**挖**出房间和走廊 —— 路线数量由挖洞决定：
-    两个舱室之间只留三条通路（上弧 / 下弧 / 中间一条竖井捷径），
-    每条通路上都是 2 格宽的门。想通过，只能穿门；穿门，就只能等视锥扫过去。
-
-    于是"极少路径选择"变成一个可以量化的东西（见 scripts/audit_routes.py）：
-    互不重叠的路线数 = 4，咽喉门 = 20 道。
-    """
-    W, H = 80, 60
-    m = GridMap.filled(W, H)
-
-    # ---- 1. 挖房间（闭区间，x0,y0,x1,y1）----
-    # S=出生舱  G1..G7=七个哨站房间  T=终端舱
-    for (x0, y0, x1, y1) in (
-        (3, 3, 10, 10),      # S  出生舱（撤离点也在这里，形成折返闭环）
-        (22, 2, 33, 13),     # G1 北哨塔
-        (42, 2, 57, 16),     # G2 机库
-        (39, 27, 52, 35),    # G3 中继站
-        (64, 22, 75, 35),    # G4 东厅
-        (3, 32, 17, 44),     # G5 西仓库
-        (32, 36, 45, 48),    # G6 南机房
-        (57, 36, 66, 48),    # G7 泵站
-        (68, 47, 77, 56),    # T  终端舱
-    ):
-        _carve(m, x0, y0, x1, y1)
-
-    # ---- 2. 挖走廊（3 格宽：够玩家侧身贴墙，不够绕过哨兵）----
-    for (x0, y0, x1, y1) in (
-        (12, 5, 20, 7),      # A1 出生舱 → G1
-        (35, 5, 40, 7),      # A2 G1 → G2
-        (46, 18, 50, 25),    # A3 机库竖向井（G2 → G3）
-        (54, 30, 62, 32),    # A4 G3 → G4
-        (68, 37, 70, 45),    # A5 东厅 → 终端舱
-        (5, 12, 6, 30),      # B1 出生舱 → 西仓库（2 格宽长竖廊）
-        (19, 38, 30, 40),    # B2 西仓库 → 南机房
-        (47, 40, 55, 42),    # B3 南机房 → 泵站
-        (61, 50, 66, 52),    # B4 泵站 → 终端舱
-        (24, 15, 25, 36),    # X1 竖井：G1 直通 B2 的高风险捷径
-    ):
-        _carve(m, x0, y0, x1, y1)
-
-    # ---- 3. 打门（每条通路都收窄到 2 格）----
-    # 这一步是"路径很少但依然有解"的关键：门宽 2 格 = 一次只够一个人过，
-    # 而哨兵的身位 + 视野锥在门内侧横扫时，玩家必须等它走开。
-    for (x0, y0, x1, y1, _name, _arc) in DOORS:
-        _carve(m, x0, y0, x1, y1)
-
-    # ---- 4. 房间里的柱子 / 货箱：制造视线死角，但不新增通路 ----
-    # 门和目标点周围 2 格内保持空，否则会出现"进门就被柱子卡住"的手感事故。
-    protected = set()
-    for (x0, y0, x1, y1, _name, _arc) in DOORS:
-        for dx in range(-2, 3):
-            for dy in range(-2, 3):
-                protected.add((x0 + dx, y0 + dy))
-                protected.add((x1 + dx, y1 + dy))
-    for cx, cy in (C.DATA_TERMINAL, C.EXFIL_POINT):
-        for dx in range(-2, 3):
-            for dy in range(-2, 3):
-                protected.add((int(cx) + dx, int(cy) + dy))
-
-    cover_blocks = [
-        # G1 北哨塔
-        (26, 6, 2, 2), (29, 9, 2, 2), (25, 11, 2, 2),
-        # G2 机库（大开间：柱子更密，否则 8 格视野一眼看穿整个房间）
-        (46, 5, 2, 2), (52, 6, 2, 2), (45, 10, 3, 2), (51, 12, 2, 2),
-        (48, 13, 2, 2),
-        # G3 中继站
-        (43, 29, 2, 2), (48, 32, 2, 2),
-        # G4 东厅
-        (68, 25, 2, 2), (72, 29, 2, 2), (66, 32, 2, 2),
-        # G5 西仓库
-        (6, 35, 2, 2), (12, 38, 3, 2), (7, 41, 2, 2),
-        # G6 南机房
-        (35, 38, 2, 2), (40, 41, 2, 3), (33, 45, 2, 2),
-        # G7 泵站
-        (59, 39, 2, 2), (63, 42, 2, 2), (58, 45, 2, 2),
-        # T 终端舱（别挡住终端，终端在 74.5,54.5）
-        (70, 49, 2, 2),
-    ]
-    _add_cover(m, cover_blocks, (5.5, 5.5), protected)
-
-    # ---- 5. 连通性自检：任何一块该到的区域到不了，立刻报错 ----
-    # 关卡是手写坐标，写错一个数字就会挖出一条死路 —— 让它在构建期就炸掉，
-    # 而不是等玩家走到墙前面才发现。
-    #
-    # 这里用"可达格数 == 总可走格数"做全图连通校验，而不是只抽查几个坐标：
-    # 抽查点很容易刚好落在柱子上（我第一次写就撞了），校验本身反而变成噪音。
-    reach = _flood_floor(m, 5, 5)
-    floors = [(x, y) for y in range(H) for x in range(W) if not m.is_wall(x, y)]
-    if len(reach) != len(floors):
-        orphans = sorted(set(floors) - reach)[:6]
-        raise RuntimeError(
-            f"关卡不连通：{len(floors) - len(reach)} 个可走格从出生点不可达，"
-            f"例如 {orphans}"
-        )
-    return m
-
-
-def _snap_to_floor(grid, x: float, y: float) -> tuple:
-    """把坐标吸附到最近的空格中心（原地是墙时按半径扩散找）。"""
-    cx, cy = int(x), int(y)
-    if not grid.is_wall(cx, cy):
-        return (x, y)
-    for r in range(1, 8):
-        best = None
-        best_d = 1e9
-        for dx in range(-r, r + 1):
-            for dy in range(-r, r + 1):
-                nx, ny = cx + dx, cy + dy
-                if grid.is_wall(nx, ny):
-                    continue
-                d = dx * dx + dy * dy
-                if d < best_d:
-                    best_d, best = d, (nx, ny)
-        if best is not None:
-            return (best[0] + 0.5, best[1] + 0.5)
-    return (x, y)
+    """第 1 关（哨站）的地图。等价于 `levels.LEVELS[0].build()`。"""
+    return LEVELS[0].build()
 
 
 def build_spawn_and_patrols(grid=None):
-    """返回 (玩家出生点, 敌人生成配置列表)。
-
-    每个敌人配置 = (x, y, 巡逻点列表)。
-
-    布置原则（比"每块区域放几个"重要得多）：
-    1. **每个门后面都有人在看**。θ 形地图只有 20 个咽喉门，
-       21 个哨兵刚好做到"门均一个 + 大房间两个"，密度用覆盖的门数衡量。
-    2. **出生舱 S 里一个都不放**。玩家一睁眼就在别人视锥里，
-       那不叫难，那叫劝退。
-    3. 巡逻点沿走廊轴向摆，别横穿房间对角 —— 横穿会让哨兵长时间背对门口，
-       玩家可以无脑跟在它后面走，等于没有关卡。
-    """
-    player_spawn = (5.5, 5.5)
-
-    enemy_cfg = [
-        # ---- 上弧 A（近路，守卫最密：走这条路就是硬碰硬）----
-        # 硬规则：**任何巡逻点离任何门至少 3 格**。
-        # 这条规则是用血换来的：最初我把"每个门后都有人看"写成了
-        # "有人贴着门来回走"，结果 2 格宽的门被永久封死 ——
-        # 机器人 8 秒撞死在 S 东门，改完巡逻点才通。
-        # 门后的人该做的是"扫过去"，不是"站在门里"。
-        (15, 6, [(15, 6), (18, 6)]),                       # A1 走廊中段
-        (27, 4, [(27, 4), (31, 7), (27, 11)]),             # G1 内圈
-        (24, 8, [(24, 8), (27, 8)]),                       # G1 西侧
-        (31, 8, [(31, 8), (31, 12)]),                      # G1 东侧（守 X1 上口的外围）
-        (38, 6, [(38, 5), (38, 7)]),                       # A2 哨位：横着扫，背对两端门
-        (45, 4, [(45, 4), (54, 4), (54, 14), (46, 13)]),   # G2 内圈
-        (50, 8, [(50, 8), (50, 12)]),                      # G2 中部
-        (47, 21, [(47, 21), (49, 21)]),                    # A3 竖井：横着扫
-        (41, 29, [(41, 29), (50, 31)]),                    # G3 对角线
-        (57, 31, [(57, 31), (60, 31)]),                    # A4 走廊中段
-        (67, 27, [(67, 27), (74, 27), (74, 33), (69, 33)]),  # G4 内圈
-        (70, 30, [(70, 27), (70, 33)]),                    # G4 中部
-        (69, 40, [(69, 40), (69, 43)]),                    # A5 咽喉中段
-        (72, 50, [(72, 50), (76, 50)]),                    # T 舱：在终端前方横巡
-        # ---- 下弧 B（远路，守卫略少：绕远换一条安静的路）----
-        # B1（19 格长、2 格宽）和 X1（22 格长、2 格宽）里**一个都不放**：
-        # 2 格宽没有绕身空间，走廊里站人 = 玩家必死。长窄廊的正确用法是
-        # "承诺跑"：廊里没人，但两端房间的哨兵能看进来，
-        # 玩家得先等门口的人转身，再一口气冲过去。
-        (5, 36, [(5, 36), (15, 36), (15, 43), (5, 43)]),   # G5 内圈
-        (10, 41, [(10, 40), (10, 43)]),                    # G5 中部
-        (37, 38, [(37, 38), (43, 38), (43, 46), (37, 46)]),  # G6 内圈
-        (37, 40, [(37, 40), (44, 44)]),                    # G6 斜巡
-        (51, 41, [(51, 41), (53, 41)]),                    # B3 走廊中段
-        (59, 38, [(59, 38), (65, 38), (65, 46), (60, 46)]),  # G7 内圈
-        (62, 43, [(62, 42), (62, 45)]),                    # G7 中部（守南门的外围）
-    ]
-
-    # 坐标统一转成"格中心"（x+0.5）：配置里写的是整数格点，
-    # 而整数坐标正好落在 4 个格子的公共**角点**上。圆形碰撞用
-    # "圆心到墙格最近点距离"，角点接触距离恰好为 0，会被判定为一直在
-    # 墙里 —— 结果就是所有敌人开局被钉死在原地。
-    cfg_centered = [
-        (x + 0.5, y + 0.5, [(px + 0.5, py + 0.5) for px, py in pts])
-        for (x, y, pts) in enemy_cfg
-    ]
-
-    # 柱子/货箱可能正好盖住手工写的巡逻点。这里做一次吸附：
-    # 落在墙里的点挪到最近的空格，避免"哨兵卡在墙里不动"这种查半天
-    # 查不出来的关卡 bug（也是我踩过的坑）。
-    if grid is not None:
-        cfg_centered = [
-            (*_snap_to_floor(grid, x, y),
-             [_snap_to_floor(grid, px, py) for px, py in pts])
-            for (x, y, pts) in cfg_centered
-        ]
-    return player_spawn, cfg_centered
-
-
-# 沿途补给点（整数格坐标，构建时统一转成格中心）。
-# 和 DOORS 一样抽成模块常量：地图构建器、审计脚本、测试三处共用一份数据，
-# 不会出现"文档说 14 个点、图上实际只有 12 个"这种对不上号。
-#
-# 摆放原则（这是设计的重点，不是随便撒）：
-# 1. **三条弧都有，且都不在主路正中间** —— 走哪条路决定你能拿到什么，
-#    "选路"才真的有代价（W11 测试守着这条：三条弧都得出货）。
-# 2. **离任何巡逻点至少 3 格**。这条是用一次实测换来的：
-#    第一版我把"风险—收益"理解成"把补给摆在哨兵来回走的线上，逼玩家卡时机"，
-#    结果机器人绕过去就撞进怀里，纯潜行胜率 3/3 → 0/3，三局死在同一个坐标。
-#    3 格是"看得见、拿得到、但不用贴着人站"的距离。
-# 3. **离门至少 2.5 格**，且要么四周开阔（可走邻域 ≥6 有退路），
-#    要么整片区域根本没有巡逻（长窄廊的"承诺跑"点位）。
-#    补给不该逼玩家走进死角 —— 那是送死，不是难度。
-# 4. **护盾只给三处**（A3 竖井南端 / G6 南角 / X1 捷径中段）。
-#    护盾能挡一次必死，是最强的资源，给多了潜行会退化成硬闯。
-PICKUPS = (
-    (23, 4, "ammo"),     # G1 西北角：出第一道门后的第一笔账
-    (24, 11, "stone"),   # G1 西南角：要绕开主路才拿得到
-    (44, 7, "ammo"),     # G2 机库西侧
-    (48, 24, "shield"),  # A3 竖井南端：北弧最窄的咽喉
-    (43, 33, "stone"),   # G3 南沿
-    (71, 30, "stone"),   # G4 中部
-    (65, 43, "ammo"),    # G7 南角
-    (75, 55, "ammo"),    # T 舱内：拿到数据、准备折返时的补给
-    (6, 26, "stone"),    # B1 长竖廊中段（承诺跑的路上，全程无人）
-    (14, 40, "ammo"),    # G5 仓库东侧
-    (40, 45, "shield"),  # G6 南机房南角
-    (63, 51, "stone"),   # B4 走廊：进终端舱前的最后一段
-    (34, 38, "ammo"),    # G6 北部
-    (24, 26, "shield"),  # X1 捷径中段：走最凶的路，给最好的奖励
-)
+    """第 1 关的出生点与巡逻配置。"""
+    return spawn_and_patrols(LEVELS[0], grid)
 
 
 def build_pickups(grid=None):
-    """返回补给点列表：每项 = {"x", "y", "kind", "taken"}。
-
-    坐标同样 +0.5 转成格中心（整数坐标落在四格公共角点上，
-    会被圆形碰撞判成"一直在墙里"），并且落在柱子/货箱里的点会被吸附出来，
-    避免出现"看得见却永远捡不到"的补给。
-    """
-    out = []
-    for (x, y, kind) in PICKUPS:
-        px, py = x + 0.5, y + 0.5
-        if grid is not None:
-            px, py = _snap_to_floor(grid, px, py)
-        out.append({"x": px, "y": py, "kind": kind, "taken": False})
-    return out
+    """第 1 关的补给点。"""
+    return level_pickups(LEVELS[0], grid)
 
 
 @dataclass
 class World:
     grid: GridMap
+    # 关卡身份：一局（World 实例）只对应一关。目标点、评级基准都随关卡走，
+    # 不再读 constants 里的全局常量 —— 否则第二关的终端会画在第一关的坐标上。
+    level_index: int = 0
+    level_name: str = ""
+    terminal: tuple = C.DATA_TERMINAL
+    exfil: tuple = C.EXFIL_POINT
+    par: tuple = (C.RANK_S, C.RANK_A, C.RANK_B)
     player: object = None
     enemies: List[object] = field(default_factory=list)
     coordinator: object = None  # 协同分配器
@@ -1073,6 +781,9 @@ class World:
             # 否则玩家只看到一个分数，无从判断是不是自己刚刚刷出来的。
             # 用本地时间而不是 UTC/时间戳：这个字符串只给人看，不做比较。
             "when": time.strftime(WHEN_FMT),
+            # 这一局打了几关。只有最后一关才提交成绩，所以 level_index+1
+            # 就是整局的关卡数 —— 存档靠它区分"单关时代"和"两关时代"的成绩。
+            "levels": self.level_index + 1,
             # 风格分明细也存下来：结算页和"最佳纪录"都能说清分数从哪来
             "style": [{"name": n, "value": v} for n, v in self.style_bonus()],
             "style_total": self.style_total(),
@@ -1084,13 +795,18 @@ class World:
         S 档额外要求"一枪没开、一次没被发现"：S 是"干净潜行"，
         不是"跑得快的屠夫"。把这条写进评级而不是只写进分数，
         是因为评级比分数更容易被玩家当成目标。
+
+        阈值不再写死：多关之后用时是**整局累计**的，基准也必须累计，
+        所以 `par` 由 Game 在开局时按"前 N 关基准之和"填进来。
+        只算单关的时候它就是 C.RANK_S/A/B，行为和以前完全一致。
         """
         t = self.elapsed
-        if t <= C.RANK_S and self.kills == 0 and self.spotted == 0:
+        par_s, par_a, par_b = self.par
+        if t <= par_s and self.kills == 0 and self.spotted == 0:
             return "S"
-        if t <= C.RANK_A:
+        if t <= par_a:
             return "A"
-        if t <= C.RANK_B:
+        if t <= par_b:
             return "B"
         return "C"
 
@@ -1100,7 +816,7 @@ class World:
         px, py = self.player.x, self.player.y
         # 潜入阶段：接触数据终端 → 取得数据，进入逃脱，触发全图警觉
         if self.state == C.STATE_INFILTRATE:
-            tx, ty = C.DATA_TERMINAL
+            tx, ty = self.terminal
             if (px - tx) ** 2 + (py - ty) ** 2 < 0.8 ** 2:
                 self.has_data = True
                 self.state = C.STATE_EXFILTRATE
@@ -1110,7 +826,7 @@ class World:
                 self.events.append("pickup")
         # 逃脱阶段：接触撤离点 → 胜利
         elif self.state == C.STATE_EXFILTRATE:
-            tx, ty = C.EXFIL_POINT
+            tx, ty = self.exfil
             if (px - tx) ** 2 + (py - ty) ** 2 < 0.8 ** 2:
                 self.state = C.STATE_VICTORY
                 self.events.append("victory")
