@@ -9,6 +9,8 @@
 
 > **核心定位**：不用任何现成 AI 库（无 stable-baselines3、无现成行为树/寻路库），感知、决策、寻路、协同全部从零实现。每一个模块都能被面试官往深处追问。
 
+> **不想装 Python？** [下载 Windows 免安装版](https://github.com/lxb0957/sneak_ai/releases/latest)（28 MB 单文件，双击即玩，存档 `records.json` 就写在 exe 旁边）。
+
 ## 演示
 
 ![演示](assets/demo.gif)
