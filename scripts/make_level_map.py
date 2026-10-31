@@ -51,11 +51,45 @@ def _font(size: int):
     return pygame.font.SysFont(None, size)
 
 
-def render(level: int, out_path: Path, width: int = 760) -> Path:
+def _trace(level: int, every: int = 4):
+    """让机器人跑一遍这一关，把玩家走过的点记下来。
+
+    路线是**跑出来的**，不是我在图上画的示意图 —— 和 botrun / 演示录像同一条
+    策略代码，所以这张图画的就是"照机器人这么走能过"。
+    """
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import botrun as bot  # noqa: E402
+    from sneak_ai.__main__ import Game  # noqa: E402
+
+    g = Game()
+    if level:
+        g.level_index = level
+        g._carry = {}
+        g._new_world()
+    pts = []
+    tick = {"n": 0}
+
+    def on_frame(_t, game, _mode):
+        # 按**帧号**采样，不能按 len(pts) —— 后者一旦和 every 不同余就永远不再增长
+        # （第一版就是这么写的，只采到 1 个点，画出来是一条 0 长度的线）。
+        tick["n"] += 1
+        if tick["n"] % every == 0:
+            pts.append((game.player.x, game.player.y))
+
+    res = bot.run(aware=True, game=g, budget=200.0, on_frame=on_frame)
+    return pts, res
+
+
+def render(level: int, out_path: Path, width: int = 760,
+           path: bool = False) -> Path:
     pygame.init()
     pygame.display.set_mode((1, 1))
     lv = L.LEVELS[level]
     grid = lv.build()
+    pygame.display.set_mode((1, 1))   # botrun 会建 1280x960 的窗口，渲染前压回去
+    trace, res = _trace(level) if path else ([], None)
+    if path:
+        pygame.display.set_mode((1, 1))
     surf = MapView(grid).surface
 
     # 裁到"有地板的地方"，否则一圈实心岩体会占掉 1/3 画面
@@ -75,6 +109,15 @@ def render(level: int, out_path: Path, width: int = 760) -> Path:
 
     def to_px(wx: float, wy: float):
         return ((wx - x0) * ts * scale, (wy - y0) * ts * scale)
+
+    # ---- 机器人路线：一条半透明的暖色折线 ----
+    if trace:
+        layer = pygame.Surface(img.get_size(), pygame.SRCALPHA)
+        pts = [to_px(x, y) for (x, y) in trace]
+        if len(pts) > 1:
+            pygame.draw.lines(layer, (255, 170, 60, 150), False,
+                              [(int(a), int(b)) for (a, b) in pts], 3)
+        img.blit(layer, (0, 0))
 
     # ---- 补给点：小圆点 ----
     for (px, py, kind) in lv.pickups:
@@ -110,8 +153,11 @@ def render(level: int, out_path: Path, width: int = 760) -> Path:
     small = _font(14)
     x = 12
     labels = [("出生", (235, 235, 240)), ("弹药", PICKUP_COLORS["ammo"]),
-              ("石子", PICKUP_COLORS["stone"]), ("护盾", PICKUP_COLORS["shield"]),
-              (f"{grid.w}x{grid.h} 格 · 外环 4 格宽", (150, 155, 165))]
+              ("石子", PICKUP_COLORS["stone"]), ("护盾", PICKUP_COLORS["shield"])]
+    if trace:
+        labels.append((f"机器人路线 {res['time']}s · {res['score']} 分",
+                       (255, 170, 60)))
+    labels.append((f"{grid.w}x{grid.h} 格 · 外环 4 格宽", (150, 155, 165)))
     for label, color in labels:
         pygame.draw.circle(canvas, color, (x, img.get_height() + 17), 4)
         t = small.render(label, True, (205, 208, 215))
@@ -128,7 +174,10 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--level", type=int, default=0)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--path", action="store_true",
+                    help="叠一条机器人实跑路线（会先跑一局，约 20 秒）")
     a = ap.parse_args()
-    out = Path(a.out) if a.out else (ROOT / "dist" / "maps" / f"level{a.level + 1}.png")
-    p = render(a.level, out, 760)
+    out = Path(a.out) if a.out else (
+        ROOT / "dist" / "maps" / f"level{a.level + 1}{'_path' if a.path else ''}.png")
+    p = render(a.level, out, 760, a.path)
     print(f"已生成 {p}（{L.LEVELS[a.level].name}）")
