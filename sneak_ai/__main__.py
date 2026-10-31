@@ -519,8 +519,82 @@ def _show_crash(exc: BaseException, log) -> None:
         pass
 
 
+def _selfcheck(frames: int = 240) -> int:
+    """无窗口自检：跳过菜单，直接开一局真实对局跑几百帧。
+
+    为什么需要它：onefile 打出来的 exe 一旦在**运行时**缺模块或资源，
+    表现就是双击后一闪而过，什么线索都不留。而最容易被漏掉的恰恰是
+    "进了游戏才会走到"的那条路径 —— 地图烘焙、21 个敌人的 AI、整帧渲染。
+    菜单能显示不代表游戏能玩。
+
+    所以这里不复用任何测试替身：真实 Game、真实按键、真实 update、
+    真实 _render（dummy 驱动下所有绘制代码照样会走一遍）。
+    打包后 `潜行协议.exe --selfcheck` 就能验一次，不用靠人盯着屏幕看。
+    """
+    # 必须赶在 Game() 里的 pygame.init() 之前设：video/audio 驱动是初始化时读的
+    os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+    os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+
+    print(f"[自检] 无窗口自检：{frames} 帧（≈{frames / 60:.1f}s 游戏时间）")
+    try:
+        g = Game()
+        g.menu.active = False          # 跳过主菜单，直接进局
+        g._show_intro = False
+        p, w = g.player, g.world
+        start_p = (p.x, p.y)
+        enemy_start = [(e.x, e.y) for e in w.enemies]
+        print(f"[自检] 窗口 {C.WINDOW_W}x{C.WINDOW_H}  敌人 {len(w.enemies)}  "
+              f"补给 {len(w.pickups)}")
+
+        dt = 1.0 / 60.0
+        # 一直往右走：给移动/碰撞/体力的整条链路施加真实输入，
+        # 而不是让世界"自己空转"——空转测不出输入到渲染的那一段。
+        p._keys = {pygame.K_d, pygame.K_LSHIFT}
+        try:
+            for _ in range(frames):
+                w.update(dt)
+                g._time_accum += dt
+                g._render(dt)
+        finally:
+            p._keys = set()
+
+        moved = math.hypot(p.x - start_p[0], p.y - start_p[1])
+        enemy_moved = sum(
+            1 for e, s in zip(w.enemies, enemy_start)
+            if math.hypot(e.x - s[0], e.y - s[1]) > 0.05
+        )
+        print(f"[自检] 玩家移动 {moved:.2f} 格 / 敌人动起来 {enemy_moved} 个 / "
+              f"状态 {w.state}")
+
+        fails = []
+        if moved < 0.5:
+            fails.append(f"玩家几乎没动（{moved:.2f} 格）：输入→移动链路断了")
+        if enemy_moved == 0:
+            fails.append("没有一个敌人移动过：AI 更新没跑起来")
+        if fails:
+            for msg in fails:
+                print(f"[自检] [FAIL] {msg}")
+            return 1
+        # 这里刻意不用 ✅ / ❌：Windows 控制台默认 GBK，emoji 编不出来会抛
+        # UnicodeEncodeError —— 自检本身因此"失败"，比不打印还误导人。
+        print("[自检] [OK] 通过：导入、地图烘焙、AI 更新、整帧渲染都正常")
+        return 0
+    except BaseException as exc:      # noqa: BLE001 —— 自检要把锅全接下来
+        traceback.print_exc()
+        print(f"[自检] [FAIL] 崩溃：{type(exc).__name__}: {exc}")
+        return 1
+    finally:
+        try:
+            pygame.quit()
+        except Exception:
+            pass
+
+
 def main() -> int:
     """入口：正常退出返回 0，崩溃返回 1 并留下 crash.log。"""
+    # 自检要放在最前面：它故意跳过菜单和存档，也不该被数据目录重定向影响
+    if "--selfcheck" in sys.argv:
+        return _selfcheck()
     anchored = _frozen_data_dir()
     if anchored is not None:
         settings.DATA_DIR = anchored

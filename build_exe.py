@@ -19,6 +19,14 @@
    收益是崩溃信息不会凭空消失 —— crash.log 已经兜底，但"看得见的报错"
    永远比"去某个目录找日志"更快。Linux/macOS 下没有这个概念，忽略。
 
+4. **入口是根目录的 `launch.py`，不是 `sneak_ai/__main__.py`**。
+   这是第一次真跑打包时踩到的：PyInstaller 把指定文件当**顶层脚本**执行，
+   于是 `__main__.py` 的 `__package__` 是空串，`from . import constants`
+   直接 `ImportError: attempted relative import with no known parent package`。
+   异常发生在导入阶段（连 main() 都没进），crash.log 写不出来，
+   用户看到的就是控制台闪一下 —— 而 `python -m sneak_ai` 永远测不出来，
+   因为那条路 `__package__` 是正常的。
+
 用法：
     pip install pyinstaller
     python build_exe.py
@@ -44,7 +52,12 @@ def main() -> int:
         return 1
 
     args = [
-        str(ROOT / "sneak_ai" / "__main__.py"),
+        # 入口必须是根目录的 launch.py，不能是 sneak_ai/__main__.py：
+        # PyInstaller 按顶层脚本执行，后者 `__package__` 为空，
+        # `from . import ...` 全部 ImportError（且崩在导入阶段，
+        # crash.log 都来不及写，表现就是控制台一闪）。详见 launch.py。
+        str(ROOT / "launch.py"),
+        "--paths", str(ROOT),
         "--name", NAME,
         "--onefile",
         "--noconfirm",
@@ -65,10 +78,13 @@ def main() -> int:
     pyi.run(args)
     out = ROOT / "dist" / (NAME + (".exe" if os.name == "nt" else ""))
     if out.exists():
-        print(f"\n✅ 已生成 {out}（{out.stat().st_size / 1e6:.1f} MB）")
+        # 别用 emoji：中文 Windows 的 cmd 是 GBK，✅ 会抛 UnicodeEncodeError，
+        # 于是"打包成功"的最后一行把自己搞成非零退出 —— 看起来像失败。
+        print(f"\n[OK] 已生成 {out}（{out.stat().st_size / 1e6:.1f} MB）")
         print("提示：首次启动会解包，比之后慢 1~2 秒是正常的。")
+        print(f"自检：先跑一次 {out.name} --selfcheck，再双击开玩")
         return 0
-    print("\n❌ 打包没有产出文件，检查上面的 PyInstaller 输出")
+    print("\n[FAIL] 打包没有产出文件，检查上面的 PyInstaller 输出")
     return 1
 
 

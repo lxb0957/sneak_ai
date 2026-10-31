@@ -41,6 +41,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # 入口自检：走的就是打包时用的那个入口文件（launch.py），
+      # 跑 240 帧真实对局 + 整帧渲染。它防的不是"某个函数算错"，
+      # 而是"游戏根本起不来"——例如入口换成包内 __main__.py 之后
+      # 相对导入整片崩掉，而所有单测都还是绿的。
+      - name: 入口自检
+        run: python launch.py --selfcheck
+
       # 每个脚本都是独立进程：一个崩了不影响后面继续跑，
       # 最后再统一看退出码 —— 这样一次 CI 就能拿到"哪几项挂了"的完整清单，
       # 而不是修一个、推一次、再发现下一个。

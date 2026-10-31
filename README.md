@@ -472,10 +472,17 @@ python -m sneak_ai
 
 ```bash
 pip install pyinstaller
-python build_exe.py          # 产物：dist/潜行协议.exe
+python build_exe.py                  # 产物：dist/潜行协议.exe（约 28 MB）
+dist/潜行协议.exe --selfcheck        # 打完之后先自检，别靠人盯着屏幕验
 ```
 
-有两个必须处理的坑，都写进 `build_exe.py` 了：一是 `records.json` / `settings.json` 不能写进 onefile 的临时解包目录（每次启动换一个、退出即删，等于"打完一局纪录没了"），入口里用 `_frozen_data_dir()` 把路径锚到 exe 旁边；二是 `assets/` 根本不用带 —— 精灵和音效全是代码生成的。
+三个**真跑打包时才现形**的坑，都写在代码里了：
+
+1. **入口必须是根目录的 `launch.py`，不能直接打包 `sneak_ai/__main__.py`**。PyInstaller 把指定文件当顶层脚本执行，后者 `__package__` 是空串，`from . import constants` 当场 `ImportError: attempted relative import with no known parent package`——而且崩在**导入阶段**，连 `crash.log` 都来不及写，双击就是控制台闪一下。`python -m sneak_ai` 测一百次都测不出来，因为那条路 `__package__` 是正常的。
+2. **存档必须写在 exe 旁边**，不能进 onefile 的临时解包目录（每次启动换一个、退出即删，等于"打完一局纪录没了"）。`_frozen_data_dir()` 把 `records` / `settings` 的路径锚到 exe 所在目录；`assets/` 则根本不用带，精灵和音效全是代码生成的。
+3. **控制台输出不要用 emoji**。中文 Windows 的 cmd 是 GBK，`✅` 会抛 `UnicodeEncodeError`，于是"自检通过"那一行把自己搞成非零退出——看起来像打包失败。
+
+`--selfcheck` 就是为这类"打包后才发作"的问题加的：跳过菜单直接开一局，跑 240 帧真实 `world.update` + 整帧 `_render`，断言"玩家真的动了、敌人真的动了"，退出码即结论。**菜单能显示不代表游戏能玩**，而"进了游戏才走到"的那条路径恰恰是打包最容易漏的。
 
 **闪退了怎么办**：游戏不会"一闪了事"——任何未捕获的异常都会立刻推进项目根目录的
 `crash.log`（时间戳 + Python/pygame 版本 + 完整调用栈），屏幕上也会把异常类型和
