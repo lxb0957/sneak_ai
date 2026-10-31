@@ -229,20 +229,24 @@ def test_par_and_rank_are_cumulative():
     assert w.rank() != "S", "累计用时超了 S 线还评 S —— 评级变成了关卡数的函数"
     w.elapsed = c1[0] - 1.0
     assert w.rank() == "S"
-    print(f"[OK] 评级基准按累计计算（两关 S 线 {c1[0]:.0f} 秒）")
+    print(f"[OK] 评级基准按累计计算（{len(L.LEVELS)} 关 S 线 {c1[0]:.0f} 秒）")
 
 
-def test_level_two_route_count_is_small():
-    """第二关的最小割也要小：环不是"随便绕"，是"每条路都得穿闸"。"""
+def test_every_level_route_count_is_small():
+    """每一关的最小割都要小：入口少，路线才有"取舍"而不是"随便绕"。
+
+    这一条对**所有关卡**生效，所以第三关（大厅四面开口）也自动被审 ——
+    柱林看起来哪儿都能走，但真正能进场的只有四道 2 格门。
+    """
     from audit_routes import min_cut_size
 
-    lv = L.LEVELS[1]
-    grid = lv.build()
-    s = (int(lv.exfil[0]), int(lv.exfil[1]))
-    t = (int(lv.terminal[0]), int(lv.terminal[1]))
-    cut = min_cut_size(grid, s, t)
-    assert cut <= 4, f"环形枢纽的路线太多（最小割 {cut} 格），环形会把难度稀释掉"
-    print(f"[OK] 环形枢纽最小割 {cut} 格 —— 环上有 8 道闸，但金库只开 4 个口")
+    for lv in L.LEVELS:
+        grid = lv.build()
+        s = (int(lv.exfil[0]), int(lv.exfil[1]))
+        t = (int(lv.terminal[0]), int(lv.terminal[1]))
+        cut = min_cut_size(grid, s, t)
+        assert cut <= 4, f"{lv.name} 的路线太多（最小割 {cut} 格），难度会被稀释"
+        print(f"[OK] {lv.name} 最小割 {cut} 格（{len(lv.doors)} 个入口）")
 
 
 def test_record_marks_level_count():
@@ -254,17 +258,18 @@ def test_record_marks_level_count():
     """
     from sneak_ai.core import records
 
-    w, _ = make_world(1)
+    w, _ = make_world(len(L.LEVELS) - 1)
     assert w.record()["levels"] == len(L.LEVELS), "成绩里没记住关卡数"
 
-    assert records.legacy_label({"levels": 1}, 2) == "旧版 1 关"
-    assert records.legacy_label({"levels": 2}, 2) == ""
-    assert records.legacy_label({}, 2) == "", "无成绩的空存档不该被标成旧版"
+    total = len(L.LEVELS)
+    assert records.legacy_label({"levels": 1}, total) == "旧版 1 关"
+    assert records.legacy_label({"levels": total}, total) == ""
+    assert records.legacy_label({}, total) == "", "无成绩的空存档不该被标成旧版"
     print("[OK] 成绩带关卡数，旧单关存档标「旧版」而不是被改写")
 
 
 def main():
-    print("=== W17：关卡抽象 + 第二关 ===")
+    print("=== W17：关卡抽象（每一关都体检）===")
     test_registry_is_sane()
     test_every_level_builds_and_is_connected()
     test_doors_are_two_cells_wide()
@@ -274,7 +279,7 @@ def main():
     test_objectives_follow_the_level()
     test_par_and_rank_are_cumulative()
     test_record_marks_level_count()
-    test_level_two_route_count_is_small()
+    test_every_level_route_count_is_small()
     print("\n全部通过。")
 
 

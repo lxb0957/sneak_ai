@@ -143,8 +143,25 @@ def test_no_double_advance_and_carry():
     check("没有过关就不会自己切关", g.level_index == lvl)
 
     # 末关胜利后不能再往前走（越界会 IndexError）
-    g.world.state = C.STATE_VICTORY
-    step(g, 3.0)
+    #
+    # 注意这里要**先把这一局打到最后一关**：关卡数是数据决定的（现在 3 关），
+    # 写死"第 2 关就是末关"的断言会在加关卡那天变红 —— 上一版正是这么挂的。
+    while g.level_index < len(L.LEVELS) - 1:
+        g.world.state = C.STATE_VICTORY
+        step(g, 2.0)
+    check("连打穿过中间关", g.level_index == len(L.LEVELS) - 1,
+          f"共 {len(L.LEVELS)} 关")
+    check("每次过场后都回到可玩状态", g.world.state == C.STATE_INFILTRATE)
+
+    # 存档是玩家数据，测试不许写它 —— 把提交接口换成空实现
+    from sneak_ai.core import records
+    real_submit = records.submit
+    records.submit = lambda rec: False
+    try:
+        g.world.state = C.STATE_VICTORY
+        step(g, 3.0)
+    finally:
+        records.submit = real_submit
     check("末关胜利停在结算页", g.level_index == len(L.LEVELS) - 1 and
           g._next_timer == 0 and g.world.state == C.STATE_VICTORY)
 
