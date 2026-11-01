@@ -126,11 +126,16 @@ def render(level: int, out_path: Path, width: int = 760,
         pygame.draw.circle(img, PICKUP_COLORS.get(kind, (255, 255, 255)),
                            (int(cx), int(cy)), 3)
 
-    # ---- 三个关键点：实心圆 + 白边，保证在任何背景上都看得见 ----
+    # ---- 关键点：实心圆 + 白边，保证在任何背景上都看得见 ----
     font = _font(15)
-    placed = []
-    for attr, color, label in MARKERS:
-        wx, wy = getattr(lv, attr)
+    # 数据节点**可能有好几个**（第 3 关两个），所以这里遍历而不是取单个坐标。
+    # 标签也跟着变：单节点关叫"数据终端"，多节点关叫"数据舱 A/B"。
+    marks = [("出生", lv.spawn, (235, 235, 240))]
+    for i, pt in enumerate(lv.terminals):
+        label = (f"数据舱 {'AB'[i]}" if len(lv.terminals) > 1 else "数据终端")
+        marks.append((label, pt, (120, 240, 170)))
+    marks.append(("撤离点", lv.exfil, (110, 180, 245)))
+    for label, (wx, wy), color in marks:
         cx, cy = to_px(wx, wy)
         pygame.draw.circle(img, (8, 10, 14), (int(cx), int(cy)), 9)
         pygame.draw.circle(img, color, (int(cx), int(cy)), 6)
@@ -157,7 +162,7 @@ def render(level: int, out_path: Path, width: int = 760,
     if trace:
         labels.append((f"机器人路线 {res['time']}s · {res['score']} 分",
                        (255, 170, 60)))
-    labels.append((f"{grid.w}x{grid.h} 格 · 外环 4 格宽", (150, 155, 165)))
+    labels.append((f"{grid.w}x{grid.h} 格", (150, 155, 165)))
     for label, color in labels:
         pygame.draw.circle(canvas, color, (x, img.get_height() + 17), 4)
         t = small.render(label, True, (205, 208, 215))

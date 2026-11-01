@@ -45,7 +45,10 @@ class World:
     # 不再读 constants 里的全局常量 —— 否则第二关的终端会画在第一关的坐标上。
     level_index: int = 0
     level_name: str = ""
-    terminal: tuple = C.DATA_TERMINAL
+    # 数据节点**是一组**：第 1、2 关各 1 个，第 3 关 2 个。
+    # 世界只认"这一组节点"，不认"那个终端" —— 加节点是关卡数据的事，
+    # 判定逻辑不该为每一关改一次。
+    terminals: tuple = (C.DATA_TERMINAL,)
     exfil: tuple = C.EXFIL_POINT
     par: tuple = (C.RANK_S, C.RANK_A, C.RANK_B)
     player: object = None
@@ -67,6 +70,7 @@ class World:
     last_known: tuple = None   # 全队最后确知玩家位置（流场目标，不用真实坐标）
     last_known_age: float = 0.0  # 距上次确知过了多久（秒）
     has_data: bool = False     # 是否已取得数据
+    taken: List[int] = field(default_factory=list)  # 已取的数据节点下标（按取得顺序）
     elapsed: float = 0.0       # 本局用时（秒）
     captured: bool = False     # 是否被抓住
     # 抓住你的那个哨兵（结算页用它画“谁抓的 + 从哪来”）：
@@ -103,6 +107,15 @@ class World:
     _sound_field: object = None
     _sound_tile: tuple = None
     sound_builds: int = 0      # 累计建场次数（测试用它证明"没有逐帧重算"）
+
+    @property
+    def terminal(self) -> tuple:
+        """第一个数据节点。老脚本只认单目标，保留这个别名（只读）。"""
+        return self.terminals[0]
+
+    def remaining(self) -> list:
+        """还没拿到的数据节点：[(下标, 坐标), ...]，顺序即关卡建议顺序。"""
+        return [(i, t) for i, t in enumerate(self.terminals) if i not in self.taken]
 
     def update(self, dt: float) -> None:
         # 结算状态：冻结世界更新，等待玩家操作
@@ -812,18 +825,36 @@ class World:
 
     # ---- 玩法判定 ----
     def _check_objectives(self) -> None:
-        """检测玩家是否接触目标点，推进游戏状态。"""
+        """检测玩家是否接触目标点，推进游戏状态。
+
+        多节点之后这里有一条关键规则：**拿第一个节点就拉响警报**。
+        第 1、2 关只有一个节点，所以"拿数据 → 警报 → 撤离"对他们完全没变；
+        第 3 关两个节点，玩家会在封锁状态下走第二条腿 —— 前半段安静、
+        后半段被追，整关的节奏因此分成两截，而不是"一条长走廊的加长版"。
+        """
         px, py = self.player.x, self.player.y
-        # 潜入阶段：接触数据终端 → 取得数据，进入逃脱，触发全图警觉
+        # 潜入阶段：接触任意一个未取的数据节点 → 记一笔
         if self.state == C.STATE_INFILTRATE:
-            tx, ty = self.terminal
-            if (px - tx) ** 2 + (py - ty) ** 2 < 0.8 ** 2:
+            for i, (tx, ty) in enumerate(self.terminals):
+                if i in self.taken:
+                    continue
+                if (px - tx) ** 2 + (py - ty) ** 2 >= 0.8 ** 2:
+                    continue
+                self.taken.append(i)
+                self.events.append("pickup")
+                # 还有节点没拿：警报先响，剩下的路在被封锁的状态下走
+                if len(self.taken) < len(self.terminals):
+                    self.alert = True
+                    self._alert_timer = 3.0
+                    self._apply_alert()
+                    break
+                # 全部拿到 → 进入逃脱，触发全图警觉
                 self.has_data = True
                 self.state = C.STATE_EXFILTRATE
                 self.alert = True
                 self._alert_timer = 3.0  # 屏幕顶部短暂提示
                 self._apply_alert()
-                self.events.append("pickup")
+                break
         # 逃脱阶段：接触撤离点 → 胜利
         elif self.state == C.STATE_EXFILTRATE:
             tx, ty = self.exfil

@@ -159,7 +159,7 @@ class Game:
         self.world = World(grid)
         self.world.level_index = lv.idx
         self.world.level_name = lv.name
-        self.world.terminal = lv.terminal
+        self.world.terminals = lv.terminals
         self.world.exfil = lv.exfil
         # 评级基准按"累计"算：跑到第 2 关时，允许的时间是两关之和。
         # 只比较单关用时的话，越往后越容易拿 S，评级就没有意义了。
@@ -561,11 +561,13 @@ class Game:
     # ============ 目标点 ============
     def _draw_goals(self) -> None:
         pulse = self._pulse()
-        # 数据终端：仅潜入阶段显示。坐标随关卡走（world.terminal）。
+        # 数据节点：仅潜入阶段显示。坐标随关卡走（world.terminals）。
+        # 已经拿到的节点不再画 —— 玩家需要一眼看出"还剩几个、在哪"，
+        # 而不是对着两个一模一样的方块猜哪个还没摸。
         if self.world.state == C.STATE_INFILTRATE:
-            tx, ty = self.world.terminal
-            sx, sy = self.cam.world_to_screen(tx, ty)
-            self.px.draw_goal(self.screen, int(sx), int(sy), "terminal", pulse)
+            for i, (tx, ty) in self.world.remaining():
+                sx, sy = self.cam.world_to_screen(tx, ty)
+                self.px.draw_goal(self.screen, int(sx), int(sy), "terminal", pulse)
         # 撤离点：逃脱阶段显示（拿数据后高亮）
         if self.world.state == C.STATE_EXFILTRATE:
             tx, ty = self.world.exfil

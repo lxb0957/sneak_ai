@@ -345,10 +345,15 @@ def run(aware=True, immune=False, budget=200.0, weight=7.0, verbose=False,
     w, p = g.world, g.player
 
     def goal():
-        # 目标点读关卡实例（world.terminal / world.exfil），
+        # 目标点读关卡实例（world.terminals / world.exfil），
         # 不是 constants 的全局常量 —— 后者永远是第 1 关的坐标。
+        # 多个数据节点时取**最近的**那个：机器人不做全局排序，它只看眼前
+        # 这一步 —— "先拿哪一份"因此是留给玩家的决定，不是被算法替她做掉的。
         if w.state == C.STATE_INFILTRATE:
-            return (int(w.terminal[0]), int(w.terminal[1]))
+            left = w.remaining() or list(enumerate(w.terminals))
+            _i, (tx, ty) = min(
+                left, key=lambda it: (it[1][0] - p.x) ** 2 + (it[1][1] - p.y) ** 2)
+            return (int(tx), int(ty))
         return (int(w.exfil[0]), int(w.exfil[1]))
 
     target = goal()
@@ -362,6 +367,7 @@ def run(aware=True, immune=False, budget=200.0, weight=7.0, verbose=False,
     replan = 0.0
     t = 0.0
     stuck, last = 0, (p.x, p.y)
+    legs, legs_done = [], 0   # 每段数据节点的到达时刻（见下面的分段打点）
     detour = None      # 当前正在绕路去拿的补给点（被追时会立刻丢弃）
     detour_t = 0.0
 
@@ -504,6 +510,14 @@ def run(aware=True, immune=False, budget=200.0, weight=7.0, verbose=False,
 
         w.update(1 / 60)
         t += 1 / 60
+        # 分段打点：每拿到一个数据节点记一次（时刻 / 被发现次数）。
+        # 为什么必须记：第 3 关有两个节点，而机器人的死法经常集中在**出口那道
+        # 门**上 —— 只看"胜/负"的话，前半段改得再狠都看不出来，
+        # 因为胜负早被出口那一下决定了。分段数据才看得见"哪一段在压人"。
+        while legs_done < len(w.taken):
+            legs.append({"idx": w.taken[legs_done], "t": round(w.elapsed, 1),
+                         "spotted": w.spotted})
+            legs_done += 1
         if on_frame is not None:
             on_frame(t, g, mode)
 
@@ -541,6 +555,10 @@ def run(aware=True, immune=False, budget=200.0, weight=7.0, verbose=False,
         # 调权重时根本不知道是哪一半在起作用。
         "base": int(round(w.base_score())),
         "pos": (round(p.x), round(p.y)),
+        # 分段：第几个节点、什么时刻到的、到的时候已经被看见几次
+        "legs": legs,
+        "nodes": len(w.taken),
+        "nodes_total": len(w.terminals),
     }
 
 

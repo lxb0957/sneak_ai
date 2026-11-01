@@ -49,7 +49,7 @@ def make_world(idx: int):
     w = World(grid)
     w.level_index = lv.idx
     w.level_name = lv.name
-    w.terminal = lv.terminal
+    w.terminals = lv.terminals
     w.exfil = lv.exfil
     w.par = L.cumulative_par(idx)
     w.coordinator = Coordinator(grid)
@@ -197,9 +197,19 @@ def test_objectives_follow_the_level():
         w, _ = make_world(lv.idx)
         seen.add((lv.terminal, lv.exfil))
 
-        w.player.x, w.player.y = lv.terminal
+        w.player.x, w.player.y = lv.terminals[0]
         w._check_objectives()
-        assert w.state == C.STATE_EXFILTRATE, f"{lv.name} 的终端没触发"
+        if len(lv.terminals) == 1:
+            assert w.state == C.STATE_EXFILTRATE, f"{lv.name} 的终端没触发"
+        else:
+            # 多节点关卡：拿第一个只是"记一笔"，还没到能撤的时候
+            assert w.state == C.STATE_INFILTRATE, f"{lv.name} 拿第一个节点就放行了"
+            assert w.has_data is False, f"{lv.name} 拿第一个节点就标记了'已取得数据'"
+            assert w.alert is True, f"{lv.name} 拿第一个节点应该拉响警报"
+            for pt in lv.terminals[1:]:
+                w.player.x, w.player.y = pt
+                w._check_objectives()
+            assert w.state == C.STATE_EXFILTRATE, f"{lv.name} 拿完所有节点后没进入撤离"
 
         w.player.x, w.player.y = lv.exfil
         w._check_objectives()
@@ -243,10 +253,11 @@ def test_every_level_route_count_is_small():
     for lv in L.LEVELS:
         grid = lv.build()
         s = (int(lv.exfil[0]), int(lv.exfil[1]))
-        t = (int(lv.terminal[0]), int(lv.terminal[1]))
-        cut = min_cut_size(grid, s, t)
-        assert cut <= 4, f"{lv.name} 的路线太多（最小割 {cut} 格），难度会被稀释"
-        print(f"[OK] {lv.name} 最小割 {cut} 格（{len(lv.doors)} 个入口）")
+        for node in lv.terminals:
+            t = (int(node[0]), int(node[1]))
+            cut = min_cut_size(grid, s, t)
+            assert cut <= 4, f"{lv.name} 的路线太多（最小割 {cut} 格），难度会被稀释"
+            print(f"[OK] {lv.name} 最小割 {cut} 格（{len(lv.doors)} 个入口）")
 
 
 def test_record_marks_level_count():

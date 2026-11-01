@@ -55,24 +55,47 @@ def straight(a, b):
     return math.hypot(b[0] - a[0], b[1] - a[1])
 
 
+def route_len(grid, spawn, nodes, exfil):
+    """按"最近的先拿"顺序走完所有节点，返回总格数与顺序。"""
+    cur, total, order = spawn, 0, []
+    left = list(nodes)
+    while left:
+        nxt = min(left, key=lambda n: straight(cur, n))
+        d = bfs_len(grid, cur, nxt)
+        if d is None:
+            return None, order
+        total += d
+        cur = nxt
+        order.append(nxt)
+        left.remove(nxt)
+    d = bfs_len(grid, cur, exfil)
+    if d is None:
+        return None, order
+    return total + d, order
+
+
 def main():
     print("关卡绕路体检")
     print("=" * 66)
     for lv in LEVELS:
         grid = lv.build()
-        d1 = bfs_len(grid, lv.spawn, lv.terminal)
-        d2 = bfs_len(grid, lv.terminal, lv.exfil)
-        if d1 is None or d2 is None:
+        nodes = list(lv.terminals)
+        walk, order = route_len(grid, lv.spawn, nodes, lv.exfil)
+        if walk is None:
             print(f"[{lv.idx + 1}] {lv.name}: 不可达！")
             continue
-        walk = d1 + d2
-        air = straight(lv.spawn, lv.terminal) + straight(lv.terminal, lv.exfil)
+        air = straight(lv.spawn, order[0])
+        for a, b in zip(order, order[1:]):
+            air += straight(a, b)
+        air += straight(order[-1], lv.exfil)
         ratio = walk / air
         floor = sum(1 for y in range(grid.h) for x in range(grid.w)
                     if not grid.is_wall(x, y))
         print(f"[{lv.idx + 1}] {lv.name}")
         print(f"    可走格 {floor:5d}   最短路线 {walk:4d} 格   直线 {air:6.1f} 格"
               f"   绕路比 {ratio:.2f}")
+        print(f"    数据节点 {len(nodes)} 个，顺序 "
+              f"{' → '.join(f'({x:.0f},{y:.0f})' for x, y in order)}")
         print(f"    par S/A/B = {lv.par}   门 {len(lv.doors)} 道")
     print()
     print("判读：绕路比 <1.15 = 地形没参与（走廊/空地都能这么低）；")

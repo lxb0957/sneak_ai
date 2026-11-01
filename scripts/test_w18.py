@@ -59,6 +59,17 @@ def teleport(game, x, y):
     game.player.x, game.player.y = x, y
 
 
+def take_all(game):
+    """把本关**所有**数据节点摸一遍。
+
+    第 3 关有两个节点，只摸第一个不会进入撤离阶段 —— 所以凡是"我要拿到数据"
+    的地方都走这个函数，而不是写死 `w.terminal`。
+    """
+    for _i, pt in list(game.world.remaining()):
+        teleport(game, *pt)
+        step(game, DT * 2)
+
+
 def step(game, seconds):
     for _ in range(int(round(seconds / DT))):
         game.step(DT)
@@ -71,8 +82,7 @@ def test_clear_card_advances_to_next_level():
     w = g.world
     check("开局在第 1 关", g.level_index == 0 and w.level_name == L.LEVELS[0].name)
 
-    teleport(g, *w.terminal)
-    step(g, DT * 2)
+    take_all(g)
     check("拿到数据后进入逃脱阶段", w.state == C.STATE_EXFILTRATE and w.has_data)
 
     teleport(g, *w.exfil)
@@ -93,7 +103,7 @@ def test_clear_card_advances_to_next_level():
           g.world.level_name == L.LEVELS[1].name)
     check("新关卡从潜入阶段开始", g.world.state == C.STATE_INFILTRATE)
     check("新关卡目标点跟着关卡走",
-          (g.world.terminal, g.world.exfil) == (L.LEVELS[1].terminal,
+          (g.world.terminals, g.world.exfil) == (L.LEVELS[1].terminals,
                                                 L.LEVELS[1].exfil))
     check("结算标记已复位（否则第 2 关一胜就静默跳过结算）", not g._scored)
 
@@ -102,8 +112,7 @@ def test_card_freezes_world():
     """过场期间世界冻结：敌人不动、用时也不涨。"""
     g = fresh_game()
     w = g.world
-    teleport(g, *w.terminal)
-    step(g, DT * 2)
+    take_all(g)
     teleport(g, *w.exfil)
     step(g, DT * 2)
 
@@ -127,8 +136,7 @@ def test_no_double_advance_and_carry():
     w = g.world
     g.player.ammo = 3
     g.player.stones = 1
-    teleport(g, *w.terminal)
-    step(g, DT * 2)
+    take_all(g)
     teleport(g, *w.exfil)
     step(g, 3.0)
 
@@ -169,7 +177,7 @@ def test_no_double_advance_and_carry():
 def test_defeat_retry_keeps_time():
     """失败重来：回到本关开头，但已耗时间留着（罚时间不罚进度）。"""
     g = fresh_game()
-    teleport(g, *g.world.terminal)
+    take_all(g)
     step(g, DT * 2)
     step(g, 1.0)
     spent = g.world.elapsed
@@ -205,8 +213,7 @@ def test_start_level_switch():
     try:
         g2 = Game(start_level=last)
         g2._carry = {}
-        teleport(g2, *g2.world.terminal)
-        step(g2, DT * 2)
+        take_all(g2)
         teleport(g2, *g2.world.exfil)
         step(g2, 3.0)
     finally:

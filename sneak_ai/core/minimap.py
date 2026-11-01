@@ -59,10 +59,11 @@ class Minimap:
             width=1,
         )
 
-        # 目标点：坐标来自当前关卡（world.terminal / world.exfil），
+        # 目标点：坐标来自当前关卡（world.terminals / world.exfil），
         # 不是 constants 里的全局常量 —— 否则第二关的撤离点会画在第一关的角落。
         if world.state == C.STATE_INFILTRATE:
-            self._dot(screen, box, world.terminal, C.COL_TERMINAL, 3)
+            for _i, pt in world.remaining():
+                self._dot(screen, box, pt, C.COL_TERMINAL, 3)
         else:
             self._dot(screen, box, world.exfil, C.COL_EXFIL, 3)
             pygame.draw.circle(

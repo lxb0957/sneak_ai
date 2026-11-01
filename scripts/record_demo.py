@@ -38,15 +38,18 @@ GIF_COLORS = 48           # 调色板颜色数：像素风本来就色少，砍�
 MAX_SECONDS = 120.0
 
 
-def _install_phase(k: int) -> None:
-    """给所有哨兵的初始巡逻相位加一个偏移 k。
+def _install_phase(frac: float) -> None:
+    """把哨兵沿巡逻线段整体挪到 `frac`（0.0~1.0）的位置，再开始录。
 
-    为什么需要：v1.5 之后第 3 关的默认相位是**输**的那一局（机器人 24 秒被抓）。
-    同一张图换个相位就能过 —— 这不是 bug，是这类关卡的天性（BLOG 经验 31）。
-    录像要的是"能打通的走位"，所以给录制脚本一个相位旋钮，
-    和 `audit_phases.py` 用的是同一套偏移，保证"录像里那条线"和"统计里那条线"是同一类东西。
+    为什么需要：这类关卡的成绩**强烈依赖开局相位**（BLOG 经验 31）。
+    录像要录"能打通的那一局"，所以给录制脚本一个相位旋钮。
+    这里的偏移和 `audit_phases.py` 用的是**同一套算法**（沿线段插值），
+    否则"录像里那条线"和"统计里那条线"就不是同一类东西了 ——
+    v1.5 就吃过这个亏：那边按下标偏移、只有奇偶两种局面，录出来的局
+    在统计里根本不存在。
     """
     from sneak_ai.entity import enemy as _em
+    import math
 
     orig = _em.Enemy.__init__
     if getattr(orig, "_phase_patched", False):
@@ -55,14 +58,19 @@ def _install_phase(k: int) -> None:
     def patched(self, x, y, patrol=None, perception=None, chase_speed=None):
         orig(self, x, y, patrol=patrol, perception=perception,
              chase_speed=chase_speed)
-        if self.patrol:
-            self._patrol_idx = (self._patrol_idx + k) % len(self.patrol)
+        if not self.patrol or len(self.patrol) != 2 or frac <= 1e-6:
+            return   # 多点巡逻两点之间可能隔墙，别插值（会把哨兵放进墙里）
+        (ax, ay), (bx, by) = self.patrol[0], self.patrol[1]
+        self.x = ax + (bx - ax) * frac
+        self.y = ay + (by - ay) * frac
+        self._patrol_idx = 1
+        self.facing = math.atan2(by - ay, bx - ax)
 
     patched._phase_patched = True
     _em.Enemy.__init__ = patched
 
 
-def record(out_path=None, level=0, phase=0):
+def record(out_path=None, level=0, phase=0.0):
     pygame.init()
     if phase:
         _install_phase(phase)
@@ -131,7 +139,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--level", type=int, default=0, help="0=哨站 1=环形枢纽")
     ap.add_argument("--out", default=None, help="输出路径（默认按关卡取名）")
-    ap.add_argument("--phase", type=int, default=0,
-                    help="哨兵初始相位偏移（换个数值换一条走位）")
+    ap.add_argument("--phase", type=float, default=0.0,
+                    help="哨兵初始相位 0.0~1.0（沿巡逻线段插值，换个数值换一条走位）")
     a = ap.parse_args()
     record(Path(a.out) if a.out else None, a.level, a.phase)

@@ -16,6 +16,7 @@
     SDL_VIDEODRIVER=dummy python scripts/audit_phases.py [--level 2] [--n 10]
 """
 import argparse
+import math
 import sys
 from pathlib import Path
 
@@ -34,14 +35,32 @@ import botrun  # noqa: E402
 
 
 _ORIG_INIT = enemy_mod.Enemy.__init__
-_PHASE_OFFSET = [0]
+_PHASE_FRAC = [0.0]
 
 
 def _patched_init(self, x, y, patrol=None, perception=None, chase_speed=None):
+    """把哨兵放到巡逻线段的任意一点（0.0 = 起点，1.0 = 终点）。
+
+    早先这里用的是"巡逻下标 + k"，但每个哨兵只有两个巡逻点 ——
+    `k` 的**奇偶**就把相位定死了，所谓"8 个相位"其实只有 2 种局面，
+    于是胜率永远只可能是 0% / 50% / 100%。那不是难度分布，
+    是测量工具的分辨率不够。改成沿线段取连续位置之后，
+    n 个相位就是 n 种局面。
+    """
     _ORIG_INIT(self, x, y, patrol=patrol, perception=perception,
                chase_speed=chase_speed)
-    if self.patrol:
-        self._patrol_idx = (self._patrol_idx + _PHASE_OFFSET[0]) % len(self.patrol)
+    if not self.patrol or len(self.patrol) != 2:
+        # 多点巡逻（第 1 关有 6 个）两个点之间可能隔墙，线性插值会把哨兵
+        # 放进墙里 —— 那是测量工具在制造 bug，不是关卡的问题。跳过。
+        return
+    f = _PHASE_FRAC[0]
+    (ax, ay), (bx, by) = self.patrol[0], self.patrol[1]
+    if f <= 1e-6:
+        return
+    self.x = ax + (bx - ax) * f
+    self.y = ay + (by - ay) * f
+    self._patrol_idx = 1
+    self.facing = math.atan2(by - ay, bx - ax)
 
 
 enemy_mod.Enemy.__init__ = _patched_init
@@ -57,19 +76,40 @@ def main():
     targets = range(len(LEVELS)) if args.level < 0 else [args.level]
     for li in targets:
         wins, times, spots = 0, [], []
+        nodes_hist, deaths, leg_times = {}, {}, []
         for k in range(args.n):
-            _PHASE_OFFSET[0] = k
+            _PHASE_FRAC[0] = k / args.n
             res = botrun.run(aware=True, immune=False, budget=200.0,
                              weight=7.0, verbose=False, level=li)
             if res["state"] == "victory":
                 wins += 1
                 times.append(res["time"])
                 spots.append(res["spotted"])
+            else:
+                # 死在哪一格、死前拿了几个节点 —— 这两件事比"胜/负"信息量大得多。
+                # 全死在同一个格子 = 关卡只有一个卡口，不是难度合适。
+                deaths[res["pos"]] = deaths.get(res["pos"], 0) + 1
+            nodes_hist[res["nodes"]] = nodes_hist.get(res["nodes"], 0) + 1
+            leg_times.append([lg["t"] for lg in res["legs"]])
         rate = wins / args.n
         avg = sum(times) / len(times) if times else 0.0
         sp = sum(spots) / len(spots) if spots else 0.0
         print(f"[{li + 1}] {LEVELS[li].name}: {wins}/{args.n} 胜（{rate:.0%}）"
               f"   胜局均时 {avg:.1f}s   均被发现 {sp:.1f} 次")
+        total_nodes = len(LEVELS[li].terminals)
+        hist = " ".join(f"{n}/{total_nodes}:{c}" for n, c in sorted(nodes_hist.items()))
+        print(f"    死前拿到几个节点 → {hist}")
+        if deaths:
+            spot = " ".join(f"{p}×{c}" for p, c in sorted(deaths.items(),
+                                                          key=lambda kv: -kv[1]))
+            print(f"    阵亡点 → {spot}")
+        if total_nodes > 1:
+            # 每一段的中位到达时刻：哪一段最费时间，一眼看得出来
+            for j in range(total_nodes):
+                vals = sorted(row[j] for row in leg_times if len(row) > j)
+                if vals:
+                    print(f"    第 {j + 1} 个节点：{len(vals)}/{args.n} 局拿到，"
+                          f"中位 {vals[len(vals) // 2]:.1f}s")
     pygame.quit()
 
 

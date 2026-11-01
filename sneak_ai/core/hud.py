@@ -56,7 +56,14 @@ class HUD:
         # 前缀只有"第N关｜"四个多字，20px 字号下约 70px，放得下。
         tag = f"第{world.level_index + 1}关｜" if world.level_name else "目标："
         if world.state == C.STATE_INFILTRATE:
-            goal, gcol = tag + "潜入数据终端", C.COL_TERMINAL
+            # 多节点关卡要把"还剩几个"写出来：只写"潜入数据终端"会让玩家
+            # 拿完第一个之后以为该撤了，然后发现撤离点不亮（第 3 关的常见困惑）。
+            total = len(world.terminals)
+            if total > 1:
+                left = len(world.remaining())
+                goal, gcol = tag + f"数据节点 {total - left}/{total}", C.COL_TERMINAL
+            else:
+                goal, gcol = tag + "潜入数据终端", C.COL_TERMINAL
         else:
             goal, gcol = tag + "返回撤离点", C.COL_EXFIL
         screen.blit(
