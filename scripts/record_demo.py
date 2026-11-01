@@ -38,8 +38,34 @@ GIF_COLORS = 48           # 调色板颜色数：像素风本来就色少，砍�
 MAX_SECONDS = 120.0
 
 
-def record(out_path=None, level=0):
+def _install_phase(k: int) -> None:
+    """给所有哨兵的初始巡逻相位加一个偏移 k。
+
+    为什么需要：v1.5 之后第 3 关的默认相位是**输**的那一局（机器人 24 秒被抓）。
+    同一张图换个相位就能过 —— 这不是 bug，是这类关卡的天性（BLOG 经验 31）。
+    录像要的是"能打通的走位"，所以给录制脚本一个相位旋钮，
+    和 `audit_phases.py` 用的是同一套偏移，保证"录像里那条线"和"统计里那条线"是同一类东西。
+    """
+    from sneak_ai.entity import enemy as _em
+
+    orig = _em.Enemy.__init__
+    if getattr(orig, "_phase_patched", False):
+        return
+
+    def patched(self, x, y, patrol=None, perception=None, chase_speed=None):
+        orig(self, x, y, patrol=patrol, perception=perception,
+             chase_speed=chase_speed)
+        if self.patrol:
+            self._patrol_idx = (self._patrol_idx + k) % len(self.patrol)
+
+    patched._phase_patched = True
+    _em.Enemy.__init__ = patched
+
+
+def record(out_path=None, level=0, phase=0):
     pygame.init()
+    if phase:
+        _install_phase(phase)
     g = Game()
     if level:
         # 只录指定关卡：直接切关重建，跨关统计清空 —— 否则机器人赢了第 1 关
@@ -105,5 +131,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--level", type=int, default=0, help="0=哨站 1=环形枢纽")
     ap.add_argument("--out", default=None, help="输出路径（默认按关卡取名）")
+    ap.add_argument("--phase", type=int, default=0,
+                    help="哨兵初始相位偏移（换个数值换一条走位）")
     a = ap.parse_args()
-    record(Path(a.out) if a.out else None, a.level)
+    record(Path(a.out) if a.out else None, a.level, a.phase)

@@ -172,7 +172,7 @@ class Game:
         self.player = Player(player_spawn[0], player_spawn[1])
         self.world.player = self.player
         self.world.enemies = [
-            Enemy(x, y, patrol=pts, perception=self.perception)
+            Enemy(x, y, patrol=pts, perception=self.perception, chase_speed=lv.chase)
             for (x, y, pts) in enemy_cfg
         ]
         self.world.pickups = L.level_pickups(lv, self.world.grid)

@@ -31,12 +31,18 @@ from ..pathing.astar import astar
 
 
 class Enemy:
-    def __init__(self, x: float, y: float, patrol: list = None, perception=None):
+    def __init__(self, x: float, y: float, patrol: list = None, perception=None,
+                 chase_speed: float = None):
         self.x = x
         self.y = y
         self.radius = 0.35
-        self.speed = 2.2
-        self.speed_chase = 3.0
+        self.speed = C.ENEMY_PATROL_SPEED
+        # 追击速度由**关卡**给（`Level.chase`），不是全局常量 ——
+        # 它是这三关唯一一条"越往后越凶"的曲线：第 1 关追兵跑不过你（3.4），
+        # 第 2 关要你跑起来（4.0），第 3 关和你一样快（4.4，走路绝对甩不掉）。
+        # 之前三关共用 3.0，而玩家走路是 4.4 —— 走就比追兵快 47%，
+        # 被发现等于没被发现。难度曲线从"追兵速度"这一根轴上才立得起来。
+        self.speed_chase = chase_speed if chase_speed is not None else C.ENEMY_CHASE_SPEED
         self.facing = 0.0
         self.patrol = patrol or []
         # 初始巡逻相位按坐标打散：否则所有哨兵开场同步从第 0 个点出发，
