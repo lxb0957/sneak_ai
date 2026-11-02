@@ -303,21 +303,38 @@ def _hug_wall(world, p, tx, ty):
     只有在"纵向净宽 ≤4 格"时才生效：宽走廊里贴墙没有意义，
     反而会白白多走路。
     """
+    # 只在"有总闸的关"启用。这条策略是为"长直廊 + 横跨中线的巡逻"写的，
+    # 前三关没有这种结构（它们的哨兵站在门内侧和房间角落）。
+    # 一开始我让它对所有关生效，第 1 关立刻从 11/12 掉到 0/3 ——
+    # 后来收紧成"同一条廊里正对着的哨兵"，胜率回来了但慢了 9 秒：
+    # 因为它仍然会把玩家从 A* 的格中心推开。**尺子的改动范围要最小化**，
+    # 前三关的行为一个字节都不该被新关卡的策略影响。
+    if not world.power:
+        return tx, ty
     gx, gy = int(p.x), int(p.y)
     up = _free_run(world.grid, gx, gy, 0, 1)
     dn = _free_run(world.grid, gx, gy, 0, -1)
     height = up + dn + 1
     if height > 4:
         return tx, ty
+    # 只躲"同一条廊里、几乎正对着"的那个人。
+    #
+    # 第一版只看"最近的哨兵"，结果是**第 1 关从 11/12 掉到 0/3** ——
+    # 那张图的哨兵大多站在门内侧和房间角落（不在廊中线上），
+    # 贴墙对它们毫无意义，只会把玩家从 A* 的格中心推开、贴到墙根擦碰撞。
+    # 贴墙要躲的是"横跨走廊中线巡逻的人"，所以条件必须写成同一个空间语义：
+    # 同一水平线（|Δy| ≤ 1.6）+ 前方 6 格内。
     near = None
     best = 1e9
     for e in world.enemies:
         if not e.alive:
             continue
+        if abs(e.y - p.y) > 1.6 or abs(e.x - p.x) > 6.0:
+            continue
         d = abs(e.x - p.x) + abs(e.y - p.y)
         if d < best:
             best, near = d, e
-    if near is None or best > 9.0:
+    if near is None:
         return tx, ty
     # 哨兵在上面 → 贴下墙；反之贴上墙。
     if near.y >= p.y:
