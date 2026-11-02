@@ -16,7 +16,6 @@
     SDL_VIDEODRIVER=dummy python scripts/audit_phases.py [--level 2] [--n 10]
 """
 import argparse
-import math
 import sys
 from pathlib import Path
 
@@ -29,42 +28,15 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 import pygame  # noqa: E402
 
 from sneak_ai.core.levels import LEVELS  # noqa: E402
-from sneak_ai.entity import enemy as enemy_mod  # noqa: E402
 
 import botrun  # noqa: E402
 
 
-_ORIG_INIT = enemy_mod.Enemy.__init__
-_PHASE_FRAC = [0.0]
-
-
-def _patched_init(self, x, y, patrol=None, perception=None, chase_speed=None,
-                  **kw):
-    """把哨兵放到巡逻线段的任意一点（0.0 = 起点，1.0 = 终点）。
-
-    早先这里用的是"巡逻下标 + k"，但每个哨兵只有两个巡逻点 ——
-    `k` 的**奇偶**就把相位定死了，所谓"8 个相位"其实只有 2 种局面，
-    于是胜率永远只可能是 0% / 50% / 100%。那不是难度分布，
-    是测量工具的分辨率不够。改成沿线段取连续位置之后，
-    n 个相位就是 n 种局面。
-    """
-    _ORIG_INIT(self, x, y, patrol=patrol, perception=perception,
-               chase_speed=chase_speed, **kw)
-    if not self.patrol or len(self.patrol) != 2:
-        # 多点巡逻（第 1 关有 6 个）两个点之间可能隔墙，线性插值会把哨兵
-        # 放进墙里 —— 那是测量工具在制造 bug，不是关卡的问题。跳过。
-        return
-    f = _PHASE_FRAC[0]
-    (ax, ay), (bx, by) = self.patrol[0], self.patrol[1]
-    if f <= 1e-6:
-        return
-    self.x = ax + (bx - ax) * f
-    self.y = ay + (by - ay) * f
-    self._patrol_idx = 1
-    self.facing = math.atan2(by - ay, bx - ax)
-
-
-enemy_mod.Enemy.__init__ = _patched_init
+# 摆位逻辑已经不在这里了 —— 见 scripts/botrun.py 的 _place_enemy。
+# 历史上这里是个猴补丁（改 Enemy.__init__），只敢插值两点巡逻：多点巡逻
+# （第 1 关有 6 个点）相邻两点之间可能隔墙，线性插值会把哨兵放进墙里。
+# 结果就是"12 相位"对那批哨兵只有 1 种局面，量出来的胜率虚高。
+# 现在两条轴共用同一个落点函数，并且沿"起点 → 落点"逐格验地板。
 
 
 def main():
@@ -79,9 +51,14 @@ def main():
         wins, times, spots = 0, [], []
         nodes_hist, deaths, leg_times = {}, {}, []
         for k in range(args.n):
-            _PHASE_FRAC[0] = k / args.n
+            # 相位交给 botrun 统一摆位（scripts/botrun.py: _place_enemy）。
+            # 早先这里是猴补丁改 Enemy.__init__，只敢插值两点巡逻 ——
+            # 于是第 1 关那 6 点巡逻的哨兵在整轮扫描里**一动没动**，
+            # 所谓"12 个相位"对这种哨兵只有 1 种局面。现在两条轴共用
+            # 同一个落点函数，多点巡逻也沿整条回路均分，分辨率才对得上。
             res = botrun.run(aware=True, immune=False, budget=200.0,
-                             weight=7.0, verbose=False, level=li)
+                             weight=7.0, verbose=False, level=li,
+                             phase=k / args.n)
             if res["state"] == "victory":
                 wins += 1
                 times.append(res["time"])

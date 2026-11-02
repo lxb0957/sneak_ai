@@ -15,6 +15,7 @@
 import argparse
 import heapq
 import math
+import random
 import sys
 from collections import deque
 
@@ -384,9 +385,75 @@ def _plan_detour(w, p, path, pi, danger, max_off=2.0):
     return best
 
 
+def _place_enemy(world, e, frac):
+    """把哨兵放到**它自己巡逻回路的 frac 处**（0..1，沿整条回路均分）。
+
+    回路均分而不是只滑第 0 段：第 1 关那种 6 点巡逻，只滑第一段等于
+    把四五个哨兵钉在原地，"16 个相位"实际只有几段路有变化。
+    """
+    if frac <= 1e-9:
+        # frac=0 表示"不动"：保留关卡自己按坐标打散的初始相位。
+        # 这里若顺手把 _patrol_idx 归零，相位扫描的第 0 个样本就不再是
+        # 那条被记录下来的确定性基线，历史数字全部失去可比性。
+        return
+    n = len(e.patrol)
+    pos = frac * n
+    i = int(pos) % n
+    f = pos - int(pos)
+    ax, ay = e.patrol[i]
+    bx, by = e.patrol[(i + 1) % n]
+    cx, cy = _leg_point(world.grid, ax, ay, bx, by, f)
+    if (cx, cy) != (ax, ay):
+        e.x, e.y = cx, cy
+        e.facing = math.atan2(by - ay, bx - ax)
+        e._patrol_idx = (i + 1) % n   # 继续往前走，不要回头
+    else:
+        e._patrol_idx = i             # 这一段插值会穿墙：老老实实站在点上
+
+
+def _scatter_phases(world, rng=None, phase=None):
+    """把哨兵的巡逻相位挪开（**取样用，不改变关卡本身**）。
+
+    在这之前 `--runs N` 是把同一条确定性轨迹跑 N 遍：16 局的输出字节级相同，
+    "胜率 16/16"其实是一个样本被报了 16 次。这和"机器人不会贴墙"那次是同一类
+    错误 —— 把尺子的问题读成了关卡结论。
+
+    两种用法，共用同一个落点函数（`_place_enemy`），所以两条轴量的是同一件事：
+      phase=k/n   相位扫描：所有哨兵统一挪到回路的 k/n 处，得到 n 个**固定局面**
+      rng         随机采样：每个哨兵各自随机，外加随机驻留相位与开局反应时间
+    """
+    for e in world.enemies:
+        if not e.patrol:
+            continue
+        if phase is not None:
+            _place_enemy(world, e, phase % 1.0)
+            continue
+        _place_enemy(world, e, rng.random())
+        # 驻留相位也打散：一半样本"站在点上环视"，一半"走在路上"。
+        if rng.random() < 0.5:
+            e._dwell = rng.uniform(0.0, C.PATROL_PAUSE)
+            e._dwell_face = e.facing
+            e._dwell_t = 0.0
+
+
+def _leg_point(grid, ax, ay, bx, by, f):
+    """巡逻段 a→b 上 frac 处；若这一路上会穿墙就退回起点。
+
+    逐点验证而不是只看落点：只看落点的话，落点恰好在墙那边时哨兵会被
+    传送到墙的背面 —— 那是尺子在制造局面，不是在采样局面。
+    """
+    cx, cy = ax + (bx - ax) * f, ay + (by - ay) * f
+    for k in range(1, 7):
+        u = k / 6
+        px, py = ax + (cx - ax) * u, ay + (cy - ay) * u
+        if not grid.is_walkable(int(px), int(py)):
+            return ax, ay
+    return cx, cy
+
+
 def run(aware=True, immune=False, budget=200.0, weight=7.0, verbose=False,
         flee_mode="goal", game=None, on_frame=None, armed=False, loot=False,
-        level=0):
+        level=0, rng=None, start_delay=0.0, phase=None):
     """loot=False 时机器人完全无视补给 —— 这是**测量基线**。
 
     为什么默认关：机器人是量化关卡难度的尺子，尺子本身不能随着被测物一起变。
@@ -406,6 +473,10 @@ def run(aware=True, immune=False, budget=200.0, weight=7.0, verbose=False,
         g._carry = {}
         g._new_world()
     w, p = g.world, g.player
+    # 相位打散必须发生在任何一帧 update 之前：晚一帧，哨兵就已经按原本的
+    # 同步相位走过一步，"随机"就成了"确定性 + 一点噪声"，样本还是同一批。
+    if rng is not None or phase is not None:
+        _scatter_phases(w, rng=rng, phase=phase)
 
     def goal():
         # 总闸：这关只要有没拉过的闸，就先去拉。
@@ -445,6 +516,13 @@ def run(aware=True, immune=False, budget=200.0, weight=7.0, verbose=False,
     detour_t = 0.0
 
     while t < budget and w.state in (C.STATE_INFILTRATE, C.STATE_EXFILTRATE):
+        # 开局反应时间：人不会在读到关卡的第一帧就迈步。这段时间玩家原地不动，
+        # 世界照常走 —— 相当于换个时刻进场，也是相位轴的一部分。
+        if t < start_delay:
+            p._keys = set()
+            w.update(1 / 60)
+            t += 1 / 60
+            continue
         # 走到闸跟前就按：靠近判定和玩家那条路径完全一致（world.nearby_power），
         # 机器人不许有"特殊权限"，否则量出来的通关率不可信。
         if w.power and w.nearby_power() is not None:
@@ -649,6 +727,11 @@ if __name__ == "__main__":
     ap.add_argument("--loot", action="store_true",
                     help="让机器人顺路捡补给（默认关闭：基线测量不受补给影响）")
     ap.add_argument("--runs", type=int, default=1)
+    ap.add_argument("--seed", type=int, default=20261102,
+                    help="取样基种子；第 i 局用 seed+i，失败可复现")
+    ap.add_argument("--jitter", type=float, default=0.0,
+                    help="随机幅度（秒）：打散哨兵巡逻相位 + 随机开局反应时间。"
+                         ">0 时 --runs 才是真采样；0 时是那条固定的确定性基线")
     ap.add_argument("--level", type=int, default=0,
                     help="关卡序号（0=哨站 1=环形枢纽），默认第 1 关")
     ap.add_argument("--weight", type=float, default=7.0)
@@ -657,9 +740,14 @@ if __name__ == "__main__":
     a = ap.parse_args()
 
     results = []
-    for _ in range(a.runs):
+    for i in range(a.runs):
+        rng = random.Random(a.seed + i) if a.jitter > 0 else None
+        # 反应时间也进样本：0 秒是"读图就冲"，jitter 秒是"先观察一会儿"。
+        delay = rng.uniform(0.0, a.jitter) if rng else 0.0
         r = run(aware=not a.dumb, immune=a.immune, weight=a.weight, verbose=a.verbose,
-                flee_mode=a.flee_mode, armed=a.armed, loot=a.loot, level=a.level)
+                flee_mode=a.flee_mode, armed=a.armed, loot=a.loot, level=a.level,
+                rng=rng, start_delay=delay)
+        r["seed"] = a.seed + i
         results.append(r)
         print(r)
     if a.runs > 1:
@@ -669,3 +757,12 @@ if __name__ == "__main__":
               f"平均被发现 {sum(r['spotted'] for r in results) / len(results):.1f} 次  "
               f"平均击倒 {sum(r['kills'] for r in results) / len(results):.1f} 人  "
               f"平均得分 {sum(r['score'] for r in results) / len(results):.0f}")
+        # 同一条轨迹重复 N 次不是胜率。让它自己喊出来，别再靠人眼发现。
+        distinct = len({(r["state"], r["time"], r["pos"], r["spotted"]) for r in results})
+        if distinct == 1:
+            print(f"⚠ {len(results)} 局是同一条轨迹（--jitter 0）："
+                  f"这不是胜率，是 1 个样本报了 {len(results)} 次；"
+                  f"要真采样请加 --jitter 1")
+        else:
+            print(f"不同结局 {distinct}/{len(results)} 种（seed {a.seed}..{a.seed + len(results) - 1}）")
+
