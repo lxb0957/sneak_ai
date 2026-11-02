@@ -38,7 +38,8 @@ _ORIG_INIT = enemy_mod.Enemy.__init__
 _PHASE_FRAC = [0.0]
 
 
-def _patched_init(self, x, y, patrol=None, perception=None, chase_speed=None):
+def _patched_init(self, x, y, patrol=None, perception=None, chase_speed=None,
+                  **kw):
     """把哨兵放到巡逻线段的任意一点（0.0 = 起点，1.0 = 终点）。
 
     早先这里用的是"巡逻下标 + k"，但每个哨兵只有两个巡逻点 ——
@@ -48,7 +49,7 @@ def _patched_init(self, x, y, patrol=None, perception=None, chase_speed=None):
     n 个相位就是 n 种局面。
     """
     _ORIG_INIT(self, x, y, patrol=patrol, perception=perception,
-               chase_speed=chase_speed)
+               chase_speed=chase_speed, **kw)
     if not self.patrol or len(self.patrol) != 2:
         # 多点巡逻（第 1 关有 6 个）两个点之间可能隔墙，线性插值会把哨兵
         # 放进墙里 —— 那是测量工具在制造 bug，不是关卡的问题。跳过。

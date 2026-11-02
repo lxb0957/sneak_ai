@@ -172,9 +172,12 @@ class Game:
         self.player = Player(player_spawn[0], player_spawn[1])
         self.world.player = self.player
         self.world.enemies = [
-            Enemy(x, y, patrol=pts, perception=self.perception, chase_speed=lv.chase)
+            Enemy(x, y, patrol=pts, perception=self.perception,
+                  chase_speed=lv.chase,
+                  alert_speed=lv.alert_speed, alert_view=lv.alert_view)
             for (x, y, pts) in enemy_cfg
         ]
+        self.world.alert_duration = lv.alert_duration
         self.world.pickups = L.level_pickups(lv, self.world.grid)
         self._apply_carry()
         self.cam.follow(self.player.x, self.player.y)  # 开局直接对准，不要平滑漂移

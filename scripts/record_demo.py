@@ -55,9 +55,9 @@ def _install_phase(frac: float) -> None:
     if getattr(orig, "_phase_patched", False):
         return
 
-    def patched(self, x, y, patrol=None, perception=None, chase_speed=None):
+    def patched(self, x, y, patrol=None, perception=None, chase_speed=None, **kw):
         orig(self, x, y, patrol=patrol, perception=perception,
-             chase_speed=chase_speed)
+             chase_speed=chase_speed, **kw)
         if not self.patrol or len(self.patrol) != 2 or frac <= 1e-6:
             return   # 多点巡逻两点之间可能隔墙，别插值（会把哨兵放进墙里）
         (ax, ay), (bx, by) = self.patrol[0], self.patrol[1]

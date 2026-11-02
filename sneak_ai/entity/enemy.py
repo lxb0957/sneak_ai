@@ -32,7 +32,8 @@ from ..pathing.astar import astar
 
 class Enemy:
     def __init__(self, x: float, y: float, patrol: list = None, perception=None,
-                 chase_speed: float = None):
+                 chase_speed: float = None,
+                 alert_speed: float = None, alert_view: float = None):
         self.x = x
         self.y = y
         self.radius = 0.35
@@ -43,6 +44,14 @@ class Enemy:
         # 之前三关共用 3.0，而玩家走路是 4.4 —— 走就比追兵快 47%，
         # 被发现等于没被发现。难度曲线从"追兵速度"这一根轴上才立得起来。
         self.speed_chase = chase_speed if chase_speed is not None else C.ENEMY_CHASE_SPEED
+        # 警报后的数值同样是**关卡**给的。理由和 speed_chase 一样，但方向相反：
+        # 之前三关共用「8.5 视野 + 4.3 追击」，第 1 关路线最长（235 格）还要原路
+        # 折返，等于教学关背了最重的惩罚 —— 12 相位只剩 3 胜，比后两关都难。
+        # 现在第 1 关的警报只是"提醒你该走了"，末关才是真的封锁。
+        self.alert_speed = (alert_speed if alert_speed is not None
+                            else C.ALERT_SPEED_CHASE)
+        self.alert_view = (alert_view if alert_view is not None
+                           else C.ALERT_VIEW_RANGE)
         self.facing = 0.0
         self.patrol = patrol or []
         # 初始巡逻相位按坐标打散：否则所有哨兵开场同步从第 0 个点出发，
@@ -145,7 +154,7 @@ class Enemy:
     def view_range(self) -> float:
         """当前有效视野（警觉状态更远），供渲染和感知共用。"""
         base = self.perception.view_range if self.perception else 0.0
-        return C.ALERT_VIEW_RANGE if self.alerted else base
+        return self.alert_view if self.alerted else base
 
     @property
     def dwelling(self) -> bool:
@@ -569,7 +578,7 @@ class Enemy:
 
     # ============ 移动原语 ============
     def _chase_speed(self) -> float:
-        return C.ALERT_SPEED_CHASE if self.alerted else self.speed_chase
+        return self.alert_speed if self.alerted else self.speed_chase
 
     def _move_with_flow(self, world, dt: float, target) -> bool:
         """按共享流场朝下一格中心移动。成功返回 True。"""

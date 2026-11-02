@@ -51,6 +51,10 @@ class World:
     terminals: tuple = (C.DATA_TERMINAL,)
     exfil: tuple = C.EXFIL_POINT
     par: tuple = (C.RANK_S, C.RANK_A, C.RANK_B)
+    # 警报时长也按关卡给（`Level.alert_duration`）。第 1 关是教学关，
+    # 封锁短一点、给玩家"等一等就能走"的余地；末关拿第一个节点就响警报，
+    # 封锁期要足够长，才逼得出"后半段在警报下跑完"这段节奏。
+    alert_duration: float = C.ALERT_DURATION
     player: object = None
     enemies: List[object] = field(default_factory=list)
     coordinator: object = None  # 协同分配器
@@ -902,7 +906,7 @@ class World:
         """警觉状态：全图敌人视野更远、追击更快。"""
         for e in self.enemies:
             e.alerted = True
-        self.alert_left = C.ALERT_DURATION
+        self.alert_left = self.alert_duration
 
     def _update_alert(self, dt: float) -> None:
         """警觉是**限时封锁**，不是永久 debuff。
