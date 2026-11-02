@@ -67,6 +67,17 @@ class World:
     hit_marks: List[dict] = field(default_factory=list)  # 命中记号（打中才有的瞬时反馈）
     pickups: List[dict] = field(default_factory=list)   # 沿途补给（弹药 / 石子 / 护盾）
 
+    # ---- 总闸 / 黑灯（第 4 关起）----
+    # 世界只认"一组闸"，和 terminals 一样：加闸是关卡数据的事，
+    # 判定逻辑不该为"这关有几个闸"改一次。
+    # 每项 = {"x", "y", "used"}；used 之后闸就废了 —— 限次是为了让它成为
+    # **一个决定**（什么时候用），而不是一个"每 14 秒按一下"的循环技能。
+    power: List[dict] = field(default_factory=list)
+    blackout_left: float = 0.0      # 黑灯剩余时间
+    blackout_duration: float = 0.0
+    blackout_view: float = 1.0      # 黑灯期敌人视野系数
+    blackout_noise: float = 0.0     # 拉闸噪音半径
+
     # ---- 游戏状态 ----
     state: str = C.STATE_INFILTRATE
     alert: bool = False        # 警觉状态（拿数据后为 True，敌人更强）
@@ -121,6 +132,66 @@ class World:
         """还没拿到的数据节点：[(下标, 坐标), ...]，顺序即关卡建议顺序。"""
         return [(i, t) for i, t in enumerate(self.terminals) if i not in self.taken]
 
+    # ---- 总闸 ----
+    @property
+    def in_blackout(self) -> bool:
+        return self.blackout_left > 0.0
+
+    @property
+    def visibility_scale(self) -> float:
+        """敌人视野的全局系数（黑灯期 <1）。敌人的 `view_range` 乘上它。
+
+        为什么是"乘视野"而不是"调暗屏幕就当看不见"：光影是表现，
+        视线是规则。只有把系数砸进 `can_see` 的入参，黑灯才真的改变玩法；
+        否则玩家只会看到屏幕变暗，然后被发现时一脸问号。
+        """
+        return self.blackout_view if self.blackout_left > 0.0 else 1.0
+
+    def nearby_power(self, radius: float = 1.8):
+        """玩家脚下能按到的闸（下标），没有就是 None。
+
+        已经黑灯时不再返回：防止玩家在 14 秒里把两个闸连着按光 ——
+        黑灯期按闸没有意义，让它直接"不可交互"比报错更清楚。
+        """
+        if self.player is None or self.in_blackout:
+            return None
+        for i, node in enumerate(self.power):
+            if node.get("used"):
+                continue
+            if math.hypot(node["x"] - self.player.x,
+                          node["y"] - self.player.y) <= radius:
+                return i
+        return None
+
+    def activate_power(self) -> str:
+        """拉闸。返回 "ok" / "used" / "far" / "blackout"，给 HUD 和测试用。
+
+        三个动作绑在一起，缺一个都会退化成"免费技能"：
+        1. 开黑灯（收益）—— 全图敌人视野 ×0.45，14 秒；
+        2. 拉响噪音（代价）—— 半径 16 格，把这间屋子附近的人都叫过来；
+        3. 闸烧掉（限次）—— 这一关就一次。
+        """
+        if self.in_blackout:
+            return "blackout"
+        i = self.nearby_power()
+        if i is None:
+            return "used" if any(n.get("used") for n in self.power) else "far"
+        node = self.power[i]
+        node["used"] = True
+        self.blackout_left = self.blackout_duration
+        # 噪音只抬到"起疑"，不越过确认阈值 —— 拉闸是"他们在查"，不是"他们看见你了"。
+        self._emit_noise(node["x"], node["y"], self.blackout_noise,
+                         C.SUSPICION_CURIOUS + 0.05, kind="power")
+        self.events.append("power_cut")
+        return "ok"
+
+    def _update_blackout(self, dt: float) -> None:
+        if self.blackout_left <= 0.0:
+            return
+        self.blackout_left = max(0.0, self.blackout_left - dt)
+        if self.blackout_left <= 0.0:
+            self.events.append("power_back")
+
     def update(self, dt: float) -> None:
         # 结算状态：冻结世界更新，等待玩家操作
         if self.state in (C.STATE_VICTORY, C.STATE_DEFEAT):
@@ -129,6 +200,7 @@ class World:
         self.elapsed += dt
         self._alarm_cd = max(0.0, self._alarm_cd - dt)
         self._update_alert(dt)
+        self._update_blackout(dt)
         self.events.clear()  # 每帧清空，主循环消费后即丢弃
 
         if self.player is not None:
@@ -172,6 +244,7 @@ class World:
                 self.flow_field = None
 
         for e in self.enemies:
+            e.vis_scale = self.visibility_scale   # 黑灯系数，渲染与判定共用
             e.update(dt, self)
 
         # 「最后已知位置」必须在敌人刷新完感知之后再更新：

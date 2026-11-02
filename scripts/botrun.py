@@ -281,6 +281,52 @@ def _wants_pickup(p, kind) -> bool:
     return False
 
 
+def _free_run(grid, x, y, dx, dy, cap=8):
+    """从 (x,y) 沿 (dx,dy) 连续可走几格（不含自身）。"""
+    n = 0
+    cx, cy = x + dx, y + dy
+    while n < cap and not grid.is_wall(cx, cy):
+        n += 1
+        cx += dx
+        cy += dy
+    return n
+
+
+def _hug_wall(world, p, tx, ty):
+    """窄廊里贴墙走：把目标点推向"离最近哨兵更远的那一侧"。
+
+    为什么必须有这一步：走廊宽 3~4 格时，哨兵在中线、视锥 110°（半角 55°），
+    玩家站在它的**正侧方**（90°）完全在锥外 —— 贴墙就能从它背后平行走过去。
+    机器人原来严格走 A* 给的格中心，等于每次都迎面撞上，
+    于是"窄段"在数据里永远是必死段。这不是关卡太狠，是尺子不会贴墙。
+
+    只有在"纵向净宽 ≤4 格"时才生效：宽走廊里贴墙没有意义，
+    反而会白白多走路。
+    """
+    gx, gy = int(p.x), int(p.y)
+    up = _free_run(world.grid, gx, gy, 0, 1)
+    dn = _free_run(world.grid, gx, gy, 0, -1)
+    height = up + dn + 1
+    if height > 4:
+        return tx, ty
+    near = None
+    best = 1e9
+    for e in world.enemies:
+        if not e.alive:
+            continue
+        d = abs(e.x - p.x) + abs(e.y - p.y)
+        if d < best:
+            best, near = d, e
+    if near is None or best > 9.0:
+        return tx, ty
+    # 哨兵在上面 → 贴下墙；反之贴上墙。
+    if near.y >= p.y:
+        ty = (gy - dn) + 0.4
+    else:
+        ty = (gy + up) + 0.6
+    return tx, ty
+
+
 def _path_len(grid, a, b):
     n = astar(grid, (int(a[0]), int(a[1])), (int(b[0]), int(b[1])))
     return None if n is None else len(n)
@@ -345,6 +391,16 @@ def run(aware=True, immune=False, budget=200.0, weight=7.0, verbose=False,
     w, p = g.world, g.player
 
     def goal():
+        # 总闸：这关只要有没拉过的闸，就先去拉。
+        # 这是机器人对"新机制"的全部理解 —— 它不知道黑灯能撑多久，
+        # 只知道"这张图上有个开关，先按了再往前走"。
+        # 刻意不给它"什么时候拉最划算"的判断：尺子越聪明，
+        # 量出来的就不是关卡难度，而是尺子的水平。
+        for node in w.power:
+            if node["used"]:
+                continue
+            if math.hypot(node["x"] - p.x, node["y"] - p.y) < 60.0:
+                return (int(node["x"] - 0.5), int(node["y"] - 0.5))
         # 目标点读关卡实例（world.terminals / world.exfil），
         # 不是 constants 的全局常量 —— 后者永远是第 1 关的坐标。
         # 多个数据节点时取**最近的**那个：机器人不做全局排序，它只看眼前
@@ -372,6 +428,10 @@ def run(aware=True, immune=False, budget=200.0, weight=7.0, verbose=False,
     detour_t = 0.0
 
     while t < budget and w.state in (C.STATE_INFILTRATE, C.STATE_EXFILTRATE):
+        # 走到闸跟前就按：靠近判定和玩家那条路径完全一致（world.nearby_power），
+        # 机器人不许有"特殊权限"，否则量出来的通关率不可信。
+        if w.power and w.nearby_power() is not None:
+            w.activate_power()
         if goal() != target:
             target = goal()
             mode, mode_t, replan = "GO", 0.0, 0.0
@@ -500,6 +560,7 @@ def run(aware=True, immune=False, budget=200.0, weight=7.0, verbose=False,
                 if math.hypot(tx - p.x, ty - p.y) < 0.4:
                     pi += 1
                 else:
+                    tx, ty = _hug_wall(w, p, tx, ty)
                     p._keys = _keys_toward(
                         p, tx, ty,
                         sneak=(mode == "GO" and danger_here > 0.25),

@@ -90,6 +90,11 @@ class SFX:
                 *self._arp([659.25, 987.77, 1318.5], 0.07, 0.34)),
             # 破盾：一段短促的下行"放电"，和枪声一样是代价，不是奖励
             "shield_break": self._make(*self._shield_break_wave()),
+            # 拉闸：低闷的下坠 + 电流尾巴。它不是奖励音 —— 这是"你刚把整栋楼
+            # 的灯关了"的确认，听感上应该有点不安，而不是悦耳。
+            "power_cut": self._make(*self._sweep(430, 46, 0.55, 0.55, "saw")),
+            # 来电：短促上行、音量低。它只是通知（可以走了），不该盖住脚步声
+            "power_back": self._make(*self._sweep(85, 520, 0.28, 0.28, "sine")),
         }
 
     def _make(self, samples: np.ndarray, volume: float = 1.0):

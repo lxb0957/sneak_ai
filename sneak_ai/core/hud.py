@@ -38,6 +38,7 @@ class HUD:
     def draw(self, screen, world, player, t: float, dt: float, muted: bool) -> None:
         self.fps_smooth += (1.0 / max(dt, 1e-6) - self.fps_smooth) * 0.05
         self._draw_status_panel(screen, world)
+        self._draw_power(screen, world)
         self._draw_exposure(screen, world, t)
         self._draw_stamina(screen, player)
         self._draw_ammo(screen, player)
@@ -99,6 +100,30 @@ class HUD:
             x = box.right - tag.get_width() - 14
             y = 22 if x > 26 + 200 else 46      # 目标行太长时让到第二行
             screen.blit(tag, (x, y))
+
+    def _draw_power(self, screen, world) -> None:
+        """总闸状态条：只在有闸的关卡出现（前三关一行都不多画）。
+
+        为什么值得单独占一条：这条信息是有时效的 —— 黑灯还剩几秒决定
+        玩家"再摸一个补给"还是"马上走"。塞进已经排满四行的状态面板里，
+        它就会变成角落里的小字，而这是整关最需要随时能瞄一眼的数字。
+        """
+        if not world.power:
+            return
+        unused = sum(1 for n in world.power if not n.get("used"))
+        if world.in_blackout:
+            text = f"断电 {world.blackout_left:4.1f}s · 哨兵视野 ×{world.blackout_view:.2f}"
+            col = (120, 220, 150)
+        elif unused:
+            text = f"总闸 {unused}/{len(world.power)} · 靠近按 E"
+            col = (255, 196, 96)
+        else:
+            text = "总闸已用尽 · 剩下的路只能靠等"
+            col = (150, 142, 132)
+        # 接在暴露条（12,140,322,52 → 底边 192）下面，不压它
+        box = pygame.Rect(12, 198, 322, 28)
+        draw_panel(screen, box, alpha=160)
+        screen.blit(self.tc.get("power", text, 16, col, bold=True), (24, 204))
 
     def _draw_exposure(self, screen, world, t: float) -> None:
         """暴露度条：全场最高可疑度。这是玩家判断"能不能动"的唯一依据。"""

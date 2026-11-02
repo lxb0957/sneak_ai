@@ -55,6 +55,7 @@ class PixelRenderer:
         # 特效图层：视野锥共用一张，每帧只清空一次（避免逐个敌人建 Surface）
         self._fx = None
         self._vignette = None
+        self._dark = None   # 黑灯遮罩（与视锥层分开：一张常驻、一张每帧覆盖）
         self._icon_cache = {}
         self._shadow = None
         self.sprites = SpriteBank()
@@ -309,6 +310,68 @@ class PixelRenderer:
                     pts.append((cx + math.cos(a) * 11, cy + math.sin(a) * 11))
                 pygame.draw.polygon(screen, col, pts, 2)
                 pygame.draw.circle(screen, col, (cx, cy), 4, 1)
+
+    def draw_power(self, screen, cam, world, t: float) -> None:
+        """总闸：一个配电箱 + 一根手柄。三种状态必须一眼分辨。
+
+        为什么状态要画得这么明确：这个机制的全部意义是"什么时候用"，
+        如果玩家看不出"还能不能用"，那它就从决策退化成了试错。
+        - 没拉过：琥珀色呼吸 + 外圈脉冲（可交互的东西在场景里应该发光）
+        - 已拉下、灯还黑着：绿色常亮（正在进行中的效果）
+        - 已烧掉：灰褐色，手柄下垂（一次性用完了）
+        """
+        for node in world.power:
+            cx, cy = cam.world_to_screen(node["x"], node["y"])
+            if not (-60 < cx < C.WINDOW_W + 60 and -60 < cy < C.WINDOW_H + 60):
+                continue
+            used = node.get("used")
+
+            if used and world.in_blackout:
+                body, handle = (46, 86, 64), (120, 220, 150)
+            elif used:
+                body, handle = (52, 48, 44), (120, 108, 96)
+            else:
+                pulse = 0.5 + 0.5 * math.sin(t * 3.4 + node["x"] * 0.3)
+                body = self._lerp_color((255, 176, 60), (120, 74, 24), 0.35 * pulse)
+                handle = (255, 214, 120)
+                pygame.draw.circle(screen, self._lerp_color((255, 176, 60), (30, 26, 22), 0.7),
+                                   (cx, cy), int(15 + 3 * pulse), 1)
+
+            # 箱体 + 顶盖
+            pygame.draw.rect(screen, (18, 18, 20), (cx - 10, cy - 8, 20, 17),
+                             border_radius=2)
+            pygame.draw.rect(screen, body, (cx - 9, cy - 7, 18, 15), border_radius=2)
+            pygame.draw.rect(screen, handle, (cx - 6, cy - 5, 5, 2))
+            # 手柄：没拉 = 朝上；已拉 = 朝下
+            if used:
+                pygame.draw.line(screen, handle, (cx + 2, cy + 5), (cx + 6, cy - 2), 2)
+            else:
+                pygame.draw.line(screen, handle, (cx + 2, cy - 2), (cx + 6, cy + 5), 2)
+            pygame.draw.circle(screen, (240, 240, 230), (cx + 2, cy), 1)
+
+    def draw_blackout(self, screen, cam, world, player) -> None:
+        """黑灯遮罩：整屏压暗，玩家周围留一圈"手电光"。
+
+        为什么不是全屏纯黑：玩家看不见敌人，敌人也看不见玩家 —— 这是公平的，
+        但"什么都看不见"只会让人停在原地。留一圈光，玩家能看清脚下和近处，
+        远处的追兵变成暗影 —— 这正是黑灯想要的体验：**近处可操作，远处不可知**。
+        """
+        if not world.in_blackout or player is None:
+            return
+        if self._dark is None:
+            self._dark = pygame.Surface((C.WINDOW_W, C.WINDOW_H), pygame.SRCALPHA)
+        # 剩余时间不多时逐渐变亮，给玩家"要来电了"的预警
+        left = world.blackout_left
+        fade = min(1.0, left / 1.5)
+        alpha = int(150 * fade)
+        self._dark.fill((6, 10, 18, alpha))
+        px, py = cam.world_to_screen(player.x, player.y)
+        # 由内到外渐暗：一圈圈覆盖，越外越接近全暗
+        for i in range(1, 7):
+            r = int(66 + i * 26)
+            a = int(alpha * i / 7.0)
+            pygame.draw.circle(self._dark, (6, 10, 18, a), (px, py), r)
+        screen.blit(self._dark, (0, 0))
 
     def draw_shield_aura(self, screen, cam, player, t: float) -> None:
         """玩家身上的护盾光圈。

@@ -129,6 +129,7 @@ class Game:
         self.new_record = False
         self._prev_stamina = C.STAMINA_MAX
         self._tips_shown: set = set()   # 本会话已提示过的资源类型
+        self._power_tip_cd = 0.0        # 总闸提示的冷却（别每帧刷屏）
         self._show_intro = False        # 从菜单开局的第一条引导
 
         # ---- 关卡推进 ----
@@ -178,6 +179,14 @@ class Game:
             for (x, y, pts) in enemy_cfg
         ]
         self.world.alert_duration = lv.alert_duration
+        # 总闸：坐标已经是连续的格中心（关卡里就按坐标写），不再 +0.5。
+        self.world.power = [
+            {"x": px, "y": py, "used": False} for (px, py) in lv.power
+        ]
+        _dur, _view, _noise = lv.blackout
+        self.world.blackout_duration = _dur
+        self.world.blackout_view = _view
+        self.world.blackout_noise = _noise
         self.world.pickups = L.level_pickups(lv, self.world.grid)
         self._apply_carry()
         self.cam.follow(self.player.x, self.player.y)  # 开局直接对准，不要平滑漂移
@@ -226,6 +235,7 @@ class Game:
         self._step_acc = 0.0
         self._prev_stamina = C.STAMINA_MAX
         self._tips_shown = set()
+        self._power_tip_cd = 0.0
         self._show_intro = True
 
     def run(self) -> None:
@@ -293,6 +303,7 @@ class Game:
         """从菜单进入游戏：一局新的，并给开局引导。"""
         self._restart_run()
         self._tips_shown = set()
+        self._power_tip_cd = 0.0
         self._show_intro = True
 
     def _render_menu(self) -> None:
@@ -327,6 +338,14 @@ class Game:
                 self.hud.show_tip(TIPS[it["kind"]], life=4.0)
                 break
 
+        # 总闸：站到跟前才提示。这个键不写在任何地方，玩家不可能自己发现 ——
+        # 但也不能开局就写在屏幕上，那样"发现总闸"这个信息就白给了。
+        if self.world.nearby_power() is not None and not self._power_tip_cd:
+            self._power_tip_cd = 6.0
+            self.hud.show_tip("E：拉下总闸 —— 全图黑灯 14 秒，代价是他们都会听见", life=5.0)
+        if self._power_tip_cd > 0:
+            self._power_tip_cd = max(0.0, self._power_tip_cd - dt)
+
     # ============ 事件 ============
     def _handle_events(self) -> None:
         for ev in pygame.event.get():
@@ -357,6 +376,10 @@ class Game:
                 if ev.key == pygame.K_q:
                     self._throw(None)
                     continue
+                # 拉闸：E（只在总闸旁边有效，且一关只有一次）
+                if ev.key == pygame.K_e:
+                    self._use_power()
+                    continue
                 self.player.handle_key(ev.key, True)
             elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
                 # 左键 = 开枪。瞄哪打哪，射线判定，墙上会打出火花
@@ -371,6 +394,24 @@ class Game:
                 if self.world.state in (C.STATE_VICTORY, C.STATE_DEFEAT):
                     continue
                 self.player.handle_key(ev.key, False)
+
+    def _use_power(self) -> None:
+        """按 E 拉闸。
+
+        三种失败都要有反馈，不然玩家会以为"这个键坏了"：
+        - far：不在闸旁边 —— 但只有这一关有闸，前三关按 E 什么都不该发生（静默）；
+        - used：这一关的闸已经烧了；
+        - blackout：灯还黑着，再按没有意义。
+        """
+        if not self.world.power:
+            return
+        res = self.world.activate_power()
+        if res == "ok":
+            self.hud.show_tip(
+                f"总闸已拉下 —— 全图照明只剩 {self.world.blackout_duration:.0f} 秒，"
+                "但他们都听见了", life=4.0)
+        elif res in ("used", "blackout", "far"):
+            self.sfx.play("empty", cooldown=0.4)
 
     def _throw(self, target) -> None:
         """扔石子。没石子时给一个明确的失败反馈，别让玩家以为是按键坏了。"""
@@ -419,6 +460,10 @@ class Game:
                 self.sfx.play("victory")
             elif ev == "defeat":
                 self.sfx.play("defeat")
+            elif ev == "power_cut":
+                self.sfx.play("power_cut", volume=0.9)
+            elif ev == "power_back":
+                self.sfx.play("power_back", volume=0.7)
             elif ev == "stone_throw":
                 self.sfx.play("throw", cooldown=0.1, volume=0.9)
             elif ev == "stone_land":
@@ -490,6 +535,8 @@ class Game:
         self.px.draw_downed(screen, self.cam, self.world, self._time_accum)
         # 补给点在地面层：它是"地上的东西"，被角色压住才符合空间直觉
         self.px.draw_pickups(screen, self.cam, self.world, self._time_accum)
+        # 总闸和补给同一层：它是"场景里的东西"，不该盖住角色
+        self.px.draw_power(screen, self.cam, self.world, self._time_accum)
         self._draw_enemies()
         self._draw_player()
         self.px.draw_stones(screen, self.cam, self.world)
@@ -499,6 +546,8 @@ class Game:
         self.px.draw_hitmarks(screen, self.cam, self.world)
         self.debug.draw(screen, self.cam, self.world, self.perception, self.player)
 
+        # 黑灯压在所有角色之上、UI 之下：这是"光照"，不是"界面"
+        self.px.draw_blackout(screen, self.cam, self.world, self.player)
         self.px.draw_vignette(screen, self._danger_level())
         self.minimap.draw(screen, self.world, self.cam, self._pulse())
         self.hud.draw_threat_markers(screen, self.cam, self.world, self._time_accum)

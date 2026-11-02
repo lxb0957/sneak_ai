@@ -65,6 +65,11 @@ class Enemy:
         self.role = Role.PATROL    # 当前协同角色
         self.target_tile = None    # 协同分配的目标格 (tx, ty)
         self.alerted = False       # 全局警觉（拿数据后为 True）
+        # 全局视野系数（黑灯期 <1），由 World 每帧下发。
+        # 放在敌人身上而不是每次判定时去摸 world：渲染器、机器人、
+        # 调试视图都在不同的地方问"这个哨兵现在能看多远"，
+        # 让它们各自去乘一次系数，迟早会有一处忘了乘。
+        self.vis_scale = 1.0
 
         # 本帧感知结果（供 HUD / 渲染 / 报警广播复用，避免重复 raycast）
         self.sees_player = False
@@ -152,9 +157,16 @@ class Enemy:
         return ""
 
     def view_range(self) -> float:
-        """当前有效视野（警觉状态更远），供渲染和感知共用。"""
+        """当前有效视野（警觉状态更远），供渲染和感知共用。
+
+        `vis_scale` 是黑灯的全局系数（世界每帧下发）。它必须同时作用于
+        **感知判定**和**屏幕上的视锥**：如果只改判定不改绘制，玩家会看到
+        视锥照着自己却被抓；只改绘制不改判定，则是反过来 —— 两种都是
+        "黑灯到底有没有用"完全无法判断的体验。
+        """
         base = self.perception.view_range if self.perception else 0.0
-        return self.alert_view if self.alerted else base
+        base = self.alert_view if self.alerted else base
+        return base * self.vis_scale
 
     @property
     def dwelling(self) -> bool:
