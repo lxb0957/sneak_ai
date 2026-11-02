@@ -140,6 +140,60 @@ def test_no_patrol_point_blocks_a_door():
     print("[OK] 每关的哨兵站位全部离门/闸 ≥3 格（不堵门）")
 
 
+def _corridor_span(grid, x, y, dx, dy):
+    """从 (x,y) 沿 (dx,dy) 连续可走格数（含自身）—— 用来量走廊有多宽。"""
+    n = 1
+    cx, cy = x + dx, y + dy
+    while not grid.is_wall(cx, cy):
+        n += 1
+        cx += dx
+        cy += dy
+    return n
+
+
+def test_no_patrol_pinned_in_a_narrow_corridor():
+    """3 格以内的窄廊里，不许有"几乎原地不动"的哨兵。
+
+    v1.7 的教训（第 1 关连栽四次）：3 格宽走廊里巡逻段只有 3 格时，哨兵基本
+    钉在原地 —— 那不是"会移动的视野"，是一道**固定在路中间的门**。玩家想过去
+    只能等，而它几乎不离开，等于等不到。
+
+    第 1 关一共 4 处（B3 走廊 + A1/A4/A5 三条短廊）。删掉它们，12 相位胜率
+    从 25% 一路涨到 92%。注意这不是"少放几个人"的功劳：这三条走廊长 9 格，
+    两端各要留 3 格离门距离，中间只剩 3 格 —— **在 3 格宽短廊里根本放不下
+    "会走动的视野"**，放谁都是固定门。
+
+    判据是两个可量的数，不是"看起来窄不窄"：
+      走廊宽度 ≤3 格（人站中间，两侧各留不到一格）
+      巡逻段长度 ≤3 格（它离开原位走不远，等价于原地站岗）
+    第 3 关服务廊那条 3 格宽、14 格长的巡逻不算 —— 玩家有大量窗口。
+    """
+    bad = []
+    for lv in L.LEVELS:
+        grid = lv.build()
+        for (x, y, pts) in lv.patrols():
+            for i in range(len(pts) - 1):
+                (ax, ay), (bx, by) = pts[i], pts[i + 1]
+                length = max(abs(bx - ax), abs(by - ay))
+                if ay == by and ax != bx:          # 横走 → 量纵向廊高
+                    widths = [_corridor_span(grid, cx, ay, 0, 1)
+                              + _corridor_span(grid, cx, ay, 0, -1) - 1
+                              for cx in range(min(ax, bx), max(ax, bx) + 1)]
+                    width = min(widths)
+                elif ax == bx and ay != by:        # 竖走 → 量横向廊宽
+                    widths = [_corridor_span(grid, ax, cy, 1, 0)
+                              + _corridor_span(grid, ax, cy, -1, 0) - 1
+                              for cy in range(min(ay, by), max(ay, by) + 1)]
+                    width = min(widths)
+                else:
+                    continue                        # 斜巡不适用这条规则
+                if width <= 3 and length <= 3:
+                    bad.append((lv.name, (ax, ay), (bx, by),
+                                f"廊宽 {width} 格 · 巡长 {length} 格"))
+    assert not bad, f"这些哨兵钉死在窄廊里（等于一道固定的门，玩家等不到窗口）：{bad}"
+    print("[OK] 没有哨兵钉死在 3 格以内的窄廊里（不制造固定门）")
+
+
 def test_pickups_are_reachable_and_fair():
     for lv in L.LEVELS:
         grid = lv.build()
@@ -285,6 +339,7 @@ def main():
     test_every_level_builds_and_is_connected()
     test_doors_are_two_cells_wide()
     test_no_patrol_point_blocks_a_door()
+    test_no_patrol_pinned_in_a_narrow_corridor()
     test_pickups_are_reachable_and_fair()
     test_spawn_is_not_inside_a_vision_cone()
     test_objectives_follow_the_level()

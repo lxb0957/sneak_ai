@@ -132,7 +132,12 @@ def test_no_patrol_point_blocks_a_door():
 def test_enemy_count_and_walkable_patrols():
     grid = build_demo_map()
     spawn, cfg = build_spawn_and_patrols(grid)
-    assert len(cfg) >= 20, f"哨兵只有 {len(cfg)} 个，说好的「更多敌人」呢"
+    # 下限只是防误删，**不是难度指标**。这条断言原来是 `>= 20`
+    # （W10 那一版的目标是"把敌人从 12 加到 21，难度就上来了"）——
+    # v1.7 的数据把它推翻了：第 1 关从 21 个删到 17 个，12 相位胜率
+    # 反而从 25% 涨到 92%，因为删掉的是三处"钉死在 3 格宽窄廊里"的哨兵。
+    # 能不能过，取决于哨兵站在哪、要走多长，不取决于有几个。
+    assert len(cfg) >= 15, f"哨兵只剩 {len(cfg)} 个，是不是删多了"
     assert not grid.is_wall(int(spawn[0]), int(spawn[1]))
     for i, (x, y, pts) in enumerate(cfg):
         assert not grid.is_wall(int(x), int(y)), f"#{i} 出生在墙里"
