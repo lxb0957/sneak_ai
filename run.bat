@@ -51,7 +51,7 @@ goto :eof
 
 :run
 echo Starting Stealth Protocol ...
-"%PY%" -m sneak_ai
+"%PY%" -m sneak_ai %*
 set RC=%ERRORLEVEL%
 echo.
 if "%RC%"=="0" goto finish

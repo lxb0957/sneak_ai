@@ -35,7 +35,7 @@ from .core import levels as L
 from .core.camera import Camera
 from .core.hud import HUD
 from .core.mapview import MapView
-from .core.minimap import Minimap
+from .core.minimap import FullMap, Minimap
 from .core.menu import Menu
 from .core import settings
 from .core.renderer import PixelRenderer
@@ -131,6 +131,7 @@ class Game:
         self._tips_shown: set = set()   # 本会话已提示过的资源类型
         self._power_tip_cd = 0.0        # 总闸提示的冷却（别每帧刷屏）
         self._show_intro = False        # 从菜单开局的第一条引导
+        self.show_map = False           # Tab 全图：默认关，进关卡时重置
 
         # ---- 关卡推进 ----
         # start_level 只由命令行 `--level N` 决定（调试/给朋友演示第三关用）。
@@ -168,6 +169,10 @@ class Game:
         self.world.coordinator = Coordinator(self.world.grid)
         self.mapview = MapView(self.world.grid)
         self.minimap = Minimap(self.world.grid)
+        # 全图按**当前关卡**的尺寸重建：第 4 关是 92x42 的长条，
+        # 沿用上一关的缩放档位会把图糊成一团
+        self.fullmap = FullMap(self.world.grid)
+        self.show_map = False           # 换关时收起，别把上一关的图带过来
 
         player_spawn, enemy_cfg = L.spawn_and_patrols(lv, self.world.grid)
         self.player = Player(player_spawn[0], player_spawn[1])
@@ -259,7 +264,10 @@ class Game:
         self._time_accum += dt
         self._handle_events()
         # 过场期间世界冻结：卡片上那 1.6 秒不该算进玩家用时
-        if self._next_timer <= 0:
+        # 全图（Tab）同理：站在长廊里摊开地图看路线，不该被巡逻兵顺手摸掉。
+        # 这张图只有静态信息、不含敌人，所以暂停不构成信息优势；
+        # world.elapsed 一起冻住，也就没有"暂停拖时间"的漏洞。
+        if self._next_timer <= 0 and not self.show_map:
             self.world.update(dt)
             self._update_tips(dt)
             self._handle_audio(dt)
@@ -371,6 +379,13 @@ class Game:
                             self._retry_level()
                         else:
                             self._restart_run()
+                    continue
+                # Tab：整张关卡俯视图。只画静态信息，不显示敌人
+                if ev.key == pygame.K_TAB:
+                    self.show_map = not self.show_map
+                    # 打开时清空按住的方向键，否则"按着 W 打开地图"会在暂停
+                    # 结束后继续往前走 —— 松开的事件已经被这次暂停吃掉了
+                    self.player.clear_keys()
                     continue
                 # 投石：Q 朝当前朝向扔（鼠标右键可以瞄准具体位置）
                 if ev.key == pygame.K_q:
@@ -553,6 +568,10 @@ class Game:
         self.hud.draw_threat_markers(screen, self.cam, self.world, self._time_accum)
         self.hud.draw(screen, self.world, self.player, self._time_accum, dt,
                       self.sfx.muted)
+
+        # 全图盖在 HUD 之上、结算页之下：它是"摊开地图看一眼"，不是游戏状态
+        if self.show_map and self.world.state not in (C.STATE_VICTORY, C.STATE_DEFEAT):
+            self.fullmap.draw(screen, self.world, self.cam)
 
         # 过关过场优先于结算页：多关模式下，"一关打完"不是"一局打完"，
         # 半路弹出结算页会把一次连续行动切成三段互不相干的小局。
