@@ -16,6 +16,12 @@ from . import records
 from . import levels as L
 from .ui import TextCache, draw_bar, draw_panel, render
 
+# 结算页的设计尺寸：整张卡片是按 1280x960 的固定像素间距排的（标题 cy-258、
+# 评级章 cy-150、提示贴底 44）。窗口比它矮太多时按设计尺寸画好再整体缩放，
+# 而不是维护两套版式。
+END_DESIGN = (1280, 960)
+END_FALLBACK_H = 700        # 低于这个高度才走缩放（1024x768 仍用原生版式）
+
 
 class HUD:
     def __init__(self):
@@ -268,13 +274,26 @@ class HUD:
 
     def _draw_center_notice(self, screen, world, t: float, muted: bool) -> None:
         """屏幕顶部中央：报警横幅 / 当前处境。"""
+        # 结算页会铺满整屏，横幅/处境文字必须让位。这条检查原来写在
+        # 横幅**之后**（只管"潜行中"那行），于是过关瞬间如果警报还在响，
+        # 横幅会压在结算卡片顶上；窗口矮一点（1024x768）就直接穿过标题。
+        if world.state in (C.STATE_VICTORY, C.STATE_DEFEAT):
+            return
+
         if world._alert_timer > 0:
             a = min(1.0, world._alert_timer / 1.0)
-            txt = self.tc.get("alert_banner", "警报 · 敌人已警觉", 38, (255, 118, 96), bold=True)
+            # 窄窗口（1366x768 笔记本会降到 896x672）里，38px 的横幅左沿会扎进
+            # 左上角那摞面板（12,12 起到 226）。先缩字号，缩了还压就整体下移。
+            size = 38 if C.WINDOW_W >= 1100 else 26
+            txt = self.tc.get(f"alert_banner_{size}", "警报 · 敌人已警觉", size,
+                              (255, 118, 96), bold=True)
             txt.set_alpha(int(255 * a))
             rect = txt.get_rect(center=(C.WINDOW_W // 2, 86))
             # 加一块深色底板：纯红字压在深灰地板上对比度太低，远处根本读不出来
             plate = rect.inflate(52, 20)
+            if plate.left < 340:       # 340 = 左上角面板右沿 334 + 一点缝
+                rect = txt.get_rect(center=(C.WINDOW_W // 2, 238 + plate.h // 2))
+                plate = rect.inflate(52, 20)
             bg = pygame.Surface(plate.size, pygame.SRCALPHA)
             bg.fill((12, 14, 18, int(150 * a)))
             screen.blit(bg, plate.topleft)
@@ -467,6 +486,36 @@ class HUD:
     def draw_end(self, screen, world, best: dict, new_record: bool, t: float) -> None:
         """结算页是静态的（只有"新纪录"在闪），所以遮罩和文字全部走缓存，
         不要在停留的这几秒里每帧重新渲染一遍。"""
+        if C.WINDOW_H < END_FALLBACK_H and (C.WINDOW_W, C.WINDOW_H) != END_DESIGN:
+            self._draw_end_scaled(screen, world, best, new_record, t)
+            return
+        self._draw_end_card(screen, world, best, new_record, t)
+
+    def _draw_end_scaled(self, screen, world, best: dict, new_record: bool,
+                         t: float) -> None:
+        """矮窗口：按设计尺寸画到离屏画布，再等比缩进窗口。
+
+        结算页是**纵向堆叠的固定像素版式**（标题在 cy-258、评级章在 cy-150、
+        提示贴底 44），窗口矮到 672（1366x768 笔记本降级后的尺寸）时，标题会
+        顶出上沿、并被左上角的状态面板啃掉一角。重排一版小尺寸版式要动上百个
+        偏移量，收益不匹配：等比缩小整张卡片，字号缩到 0.7 倍仍然可读，
+        信息和 1280x960 完全一致。
+        """
+        W, H = END_DESIGN
+        canvas = pygame.Surface(END_DESIGN, pygame.SRCALPHA)
+        old = (C.WINDOW_W, C.WINDOW_H)
+        C.WINDOW_W, C.WINDOW_H = W, H      # 卡片里的居中/贴底都读这两个常量
+        try:
+            self._draw_end_card(canvas, world, best, new_record, t)
+        finally:
+            C.WINDOW_W, C.WINDOW_H = old
+        k = min(C.WINDOW_W / W, C.WINDOW_H / H)
+        scaled = pygame.transform.smoothscale(canvas, (int(W * k), int(H * k)))
+        screen.blit(scaled, scaled.get_rect(
+            center=(C.WINDOW_W // 2, C.WINDOW_H // 2)))
+
+    def _draw_end_card(self, screen, world, best: dict, new_record: bool,
+                       t: float) -> None:
         if self._overlay is None:
             self._overlay = pygame.Surface((C.WINDOW_W, C.WINDOW_H), pygame.SRCALPHA)
             self._overlay.fill((0, 0, 0, 185))

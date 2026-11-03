@@ -197,10 +197,13 @@ def test_end_screen():
     check("结算页（含满额风格分 + 新纪录）绘制不崩", True)
 
     # 明细行数变了也不能压到底部：这一条由 audit_ui 的最坏情况兜着
-    rects = audit_ui.collect(g)
-    bad = audit_ui.find_overlaps(rects)
+    groups = audit_ui.collect(g)
+    bad = []
+    for _label, rects in groups:
+        bad += audit_ui.find_overlaps(rects)
+    total = sum(len(r) for _l, r in groups)
     detail = "; ".join(f"{a.topleft}×{b.topleft}" for a, _, b, _, _ in bad)
-    check(f"结算页与 HUD 零重叠（{len(rects)} 个落点）{detail}", not bad)
+    check(f"结算页与 HUD 零重叠（{total} 个落点）{detail}", not bad)
 
 
 def main() -> int:

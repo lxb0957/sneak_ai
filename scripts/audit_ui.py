@@ -171,6 +171,11 @@ def collect(g: Game):
     只录 HUD + 小地图：世界层（地图块、角色、特效）本来就该互相压，
     混进来只会淹没真正的问题。做法是先把世界渲染到普通画布上"预热"，
     再逐个元素换记账画布重画一遍。
+
+    返回**两组**：游戏中 / 结算页。两组之间不互相求交 —— 它们永远不会同时
+    出现（`_draw_center_notice` 在结算状态下直接 return）。早先把两组并成
+    一张表比，报出来的"警报横幅 × 结算页"是假的：那两样东西不可能同屏。
+    但组内仍然是"全部一起画"的最坏情况，所以"结算页压住底栏"照样抓得到。
     """
     g.menu.active = False
     # 把所有"条件出现"的元素一次性打开
@@ -188,15 +193,12 @@ def collect(g: Game):
 
     args = {"world": g.world, "player": g.player, "t": g._time_accum,
             "dt": 1 / 60, "muted": g.sfx.muted}
-    rects = {}
-    _merge(rects, _hud_rects(g, args))
+    game_rects = {}
+    _merge(game_rects, _hud_rects(g, args))
 
     # ---- 结算页单独扫一遍 ----
     # 结算页是最容易出重叠的地方：它是**纵向堆叠**的，行数又随内容变化
     # （风格分拿到几项就有几行）。之前漏扫这里，一加风格分就和底部提示撞上了。
-    # 注意：结算页停在 STATE_VICTORY，而 HUD 主面板这时仍然画在屏幕上
-    # （`_center_notice` 判的是"不是结算页"），所以这两批**必须**放在同一张
-    # 坐标系里比 —— 分开孤立地看，会把"弹窗压住底栏"整个漏掉。
     w = g.world
     w.state = C.STATE_VICTORY
     w.elapsed = 68.0
@@ -207,10 +209,12 @@ def collect(g: Game):
     w.shield_kills = 1
     w.bodies_found = 0
     args.update(world=w)
-    _merge(rects, _hud_rects(g, args))
-    _merge(rects, _run(g, "结算页", g.hud.draw_end,
-                       w, g.best, True, g._time_accum))
-    return rects
+    end_rects = {}
+    # 底栏（体力/弹药/石子/护盾）在结算页上仍然画着，必须和结算卡片一起比
+    _merge(end_rects, _hud_rects(g, args))
+    _merge(end_rects, _run(g, "结算页", g.hud.draw_end,
+                           w, g.best, True, g._time_accum))
+    return [("游戏中", game_rects), ("结算页", end_rects)]
 
 
 def find_overlaps(rects):
@@ -234,20 +238,68 @@ def find_overlaps(rects):
     return bad
 
 
-def main() -> int:
+def find_out_of_bounds(rects):
+    """落点跑出窗口外的元素。
+
+    "不重叠"不等于"看得见"：整块内容被挤出上沿时，元素之间依然互不重叠，
+    但玩家什么也看不到（菜单加一行操作摘要压住"回车开始"就是这一类）。
+    这里按窗口尺寸核对，边缘留 0 容差 —— 半个字被切掉也算。
+    """
+    bad = []
+    for (x, y, w, h), labels in rects.items():
+        if x < 0 or y < 0 or x + w > C.WINDOW_W or y + h > C.WINDOW_H:
+            bad.append((pygame.Rect(x, y, w, h), labels))
+    return bad
+
+
+# 窗口尺寸档位：`_create_window` 依屏幕大小在这几档之间降级，
+# 1366x768 笔记本落到 896x672，再小的屏会退到 800x600。
+# 之前只审 1280x960，于是"窄窗口下警报横幅压在状态面板上"、"矮窗口下结算卡片
+# 顶出上沿"这两类问题审计全绿 —— 它们只在没被测到的尺寸里发生。
+SIZES = [(1280, 960), (1024, 768), (896, 672), (800, 600)]
+
+
+def audit_size(size) -> int:
+    """把常量改成目标窗口尺寸，跑一遍两组的重叠检查。"""
+    import pygame  # 局部导入：main 之前不一定已经 init
+
+    w, h = size
+    C.WINDOW_W, C.WINDOW_H = w, h
+    C.VIEW_W, C.VIEW_H = w // C.TILE_SIZE, h // C.TILE_SIZE
+    pygame.display.set_mode((w, h))
     g = Game()
-    rects = collect(g)
-    return report(rects)
+    print(f"\n===== 窗口 {w}x{h} =====")
+    rc = 0
+    for label, rects in collect(g):
+        rc |= report(rects, label)
+    return rc
 
 
-def report(rects) -> int:
-    print(f"\n录到 {len(rects)} 个 UI 落点")
+def main() -> int:
+    rc = 0
+    for size in SIZES:
+        rc |= audit_size(size)
+    return rc
+
+
+def report(rects, label: str = "") -> int:
+    tag = f"[{label}] " if label else ""
+    print(f"\n{tag}录到 {len(rects)} 个 UI 落点")
     bad = find_overlaps(rects)
-    if not bad:
-        print("没有重叠 ✅")
+    outside = find_out_of_bounds(rects)
+    if not bad and not outside:
+        print(f"{tag}没有重叠 ✅  全部落在窗口内 ✅")
         return 0
 
-    print(f"发现 {len(bad)} 处重叠：")
+    if outside:
+        print(f"{tag}发现 {len(outside)} 个落点跑出窗口：")
+        for r, labels in outside:
+            print(f"  {'/'.join(labels)} [{r.w}x{r.h} @{r.topleft}]"
+                  f" → 超出窗口 {C.WINDOW_W}x{C.WINDOW_H}")
+
+    if not bad:
+        return 1
+    print(f"{tag}发现 {len(bad)} 处重叠：")
     for r1, l1, r2, l2, inter in bad:
         print(f"  {'/'.join(l1)} [{r1.w}x{r1.h} @{r1.topleft}]"
               f" × {'/'.join(l2)} [{r2.w}x{r2.h} @{r2.topleft}]"
