@@ -194,6 +194,9 @@ class Game:
         self.world.blackout_noise = _noise
         self.world.pickups = L.level_pickups(lv, self.world.grid)
         self._apply_carry()
+        # 相机夹取边界跟着这一关走：第 4 关 92x42，写死 80x60 会让最右 12 格
+        # 永远进不了屏幕（出口终端就在那儿）
+        self.cam.set_bounds(self.world.grid.w, self.world.grid.h)
         self.cam.follow(self.player.x, self.player.y)  # 开局直接对准，不要平滑漂移
 
     # ---- 跨关延续 ----

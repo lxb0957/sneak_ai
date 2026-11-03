@@ -5,7 +5,7 @@
 ![pygame-ce](https://img.shields.io/badge/pygame--ce-2.5.x-green)
 ![零外部素材](https://img.shields.io/badge/assets-100%25%20procedural-orange)
 
-从零手写游戏 AI 决策栈的 2D 潜行沙盒。三关连续潜入，目标是做出一套能在面试里讲出技术深度的 AI 系统，而不是调包跑 demo。
+从零手写游戏 AI 决策栈的 2D 潜行沙盒。四关连续潜入，目标是做出一套能在面试里讲出技术深度的 AI 系统，而不是调包跑 demo。
 
 > **核心定位**：不用任何现成 AI 库（无 stable-baselines3、无现成行为树/寻路库），感知、决策、寻路、协同全部从零实现。每一个模块都能被面试官往深处追问。
 
