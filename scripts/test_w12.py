@@ -117,12 +117,14 @@ def test_no_ui_overlap():
     import audit_ui
 
     g = Game()
-    # collect 现在按"游戏中 / 结算页"分组返回：两组不可能同屏，跨组求交会误报
+    # collect 现在按"游戏中 / 结算页 / 全图"分组返回：三组不可能同屏，
+    # 跨组求交会误报（全图本来就盖在 HUD 上，那是它的职责）
     groups = audit_ui.collect(g)
     bad = []
-    for _label, rects in groups:
-        bad += audit_ui.find_overlaps(rects)
-    total = sum(len(r) for _l, r in groups)
+    for _label, rects, mode in groups:
+        if mode == "overlap":
+            bad += audit_ui.find_overlaps(rects)
+    total = sum(len(r) for _l, r, _m in groups)
     detail = "; ".join(f"{a.topleft}×{b.topleft}" for a, _, b, _, _ in bad)
     check(f"UI 元素零重叠（{total} 个落点）: {detail}", not bad)
 

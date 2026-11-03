@@ -21,6 +21,7 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 import pygame  # noqa: E402
 
 from sneak_ai import constants as C  # noqa: E402
+from sneak_ai.core import levels as L  # noqa: E402
 from sneak_ai.__main__ import Game  # noqa: E402
 
 # 只关心"必须可读"的层；地图/角色/特效随便压，不算重叠
@@ -120,6 +121,7 @@ def _draw_rect(name, args, kw):
 # 这种真正的遮挡永远查不出来。父子关系不能靠"谁包住谁"猜，得靠来源。
 _HUD_PARTS = [
     ("状态面板", "_draw_status_panel", ("world",)),
+    ("总闸", "_draw_power", ("world",)),
     ("暴露度", "_draw_exposure", ("world", "t")),
     ("体力", "_draw_stamina", ("player",)),
     ("弹药", "_draw_ammo", ("player",)),
@@ -127,7 +129,35 @@ _HUD_PARTS = [
     ("护盾", "_draw_shield", ("player",)),
     ("处境提示", "_draw_center_notice", ("world", "t", "muted")),
     ("引导气泡", "_draw_tip", ("dt",)),
+    ("按键提示", "_draw_hint", ()),
 ]
+
+# 结算页不走清单：它需要 best / new_record 这类只有 collect 才造得出来的参数，
+# 而且在 collect 里单独跑一遍（它和游戏中的元素永不同屏）。
+_END_PARTS = {"draw_end", "_draw_end_scaled", "_draw_end_card"}
+
+
+def undiscovered_parts(hud) -> list:
+    """清单里没登记、但确实存在于 Hud 上的 `_draw_*` 方法。
+
+    为什么需要这个：清单是**手写的**，而手写清单的失效方式恰恰是静默的 ——
+    `_draw_power`（总闸条，只在有闸的关卡才会画）就一直没被登记，
+    审计跑出来"28 个落点、零重叠"，看起来把第 4 关也查了，其实那条最需要
+    盯的字（剩余秒数）根本没进过账本。新加一个 `_draw_xxx` 忘了登记，
+    审计不会报错，只会悄悄少查一块。
+
+    所以清单之外，再用 dir() 反查一遍：有没登记的就抛出来，别让覆盖率
+    靠"记得改清单"。
+    """
+    listed = {m for _l, m, _p in _HUD_PARTS}
+    out = []
+    for name in dir(hud):
+        if not name.startswith("_draw_"):
+            continue
+        if name in listed or name in _END_PARTS:
+            continue
+        out.append(name)
+    return sorted(out)
 
 
 def _run(g, label, fn, *args):
@@ -214,7 +244,16 @@ def collect(g: Game):
     _merge(end_rects, _hud_rects(g, args))
     _merge(end_rects, _run(g, "结算页", g.hud.draw_end,
                            w, g.best, True, g._time_accum))
-    return [("游戏中", game_rects), ("结算页", end_rects)]
+
+    # ---- Tab 全图单独一组：只查越界，不查重叠 ----
+    # 它本来就是**盖在 HUD 上**的模态层（打开时世界冻结），跟下面的元素"重叠"
+    # 是它的职责，不是 bug。但它的标题写在 box.y - 58，地图一高、窗口一矮就会
+    # 顶出上沿 —— 那种时候玩家看到的是半截关卡名。所以只做越界检查。
+    args["world"].state = C.STATE_INFILTRATE
+    map_rects = _run(g, "全图", g.fullmap.draw, g.world, g.cam)
+    return [("游戏中", game_rects, "overlap"),
+            ("结算页", end_rects, "overlap"),
+            ("全图", map_rects, "bounds")]
 
 
 def find_overlaps(rects):
@@ -259,33 +298,41 @@ def find_out_of_bounds(rects):
 SIZES = [(1280, 960), (1024, 768), (896, 672), (800, 600)]
 
 
-def audit_size(size) -> int:
-    """把常量改成目标窗口尺寸，跑一遍两组的重叠检查。"""
+def audit_size(size, level: int = 0) -> int:
+    """把常量改成目标窗口尺寸，跑一遍三组的检查。"""
     import pygame  # 局部导入：main 之前不一定已经 init
 
     w, h = size
     C.WINDOW_W, C.WINDOW_H = w, h
     C.VIEW_W, C.VIEW_H = w // C.TILE_SIZE, h // C.TILE_SIZE
     pygame.display.set_mode((w, h))
-    g = Game()
-    print(f"\n===== 窗口 {w}x{h} =====")
+    g = Game(start_level=level)
+
+    # 清单漏登记 = 有一块 UI 从没进过账本。这里显式失败，别静默降低覆盖率。
+    missing = undiscovered_parts(g.hud)
+    if missing:
+        print(f"\n[!] 这些 _draw_* 方法没有登记进 _HUD_PARTS：{missing}")
+        return 1
+
+    print(f"\n===== 窗口 {w}x{h} · 第{level + 1}关 =====")
     rc = 0
-    for label, rects in collect(g):
-        rc |= report(rects, label)
+    for label, rects, mode in collect(g):
+        rc |= report(rects, label, mode)
     return rc
 
 
 def main() -> int:
     rc = 0
-    for size in SIZES:
-        rc |= audit_size(size)
+    for level in range(len(L.LEVELS)):
+        for size in SIZES:
+            rc |= audit_size(size, level)
     return rc
 
 
-def report(rects, label: str = "") -> int:
+def report(rects, label: str = "", mode: str = "overlap") -> int:
     tag = f"[{label}] " if label else ""
     print(f"\n{tag}录到 {len(rects)} 个 UI 落点")
-    bad = find_overlaps(rects)
+    bad = find_overlaps(rects) if mode == "overlap" else []
     outside = find_out_of_bounds(rects)
     if not bad and not outside:
         print(f"{tag}没有重叠 ✅  全部落在窗口内 ✅")

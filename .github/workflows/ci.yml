@@ -56,7 +56,8 @@ jobs:
           set -e
           for t in smoke_test test_pathing test_w3 test_gameplay test_w6 test_w7 \
                    test_w8 test_w10 test_w11 test_w12 test_w14 test_w15 test_w16 \
-                   test_w17 test_w18 test_w19 test_w20 test_w21 test_w22 test_robustness; do
+                   test_w17 test_w18 test_w19 test_w20 test_w21 test_w22 \
+                   test_w23 test_robustness; do
             echo "===== $t ====="
             python scripts/$t.py
           done

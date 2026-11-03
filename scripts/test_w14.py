@@ -199,9 +199,10 @@ def test_end_screen():
     # 明细行数变了也不能压到底部：这一条由 audit_ui 的最坏情况兜着
     groups = audit_ui.collect(g)
     bad = []
-    for _label, rects in groups:
-        bad += audit_ui.find_overlaps(rects)
-    total = sum(len(r) for _l, r in groups)
+    for _label, rects, mode in groups:
+        if mode == "overlap":
+            bad += audit_ui.find_overlaps(rects)
+    total = sum(len(r) for _l, r, _m in groups)
     detail = "; ".join(f"{a.topleft}×{b.topleft}" for a, _, b, _, _ in bad)
     check(f"结算页与 HUD 零重叠（{total} 个落点）{detail}", not bad)
 

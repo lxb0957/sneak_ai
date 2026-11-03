@@ -43,7 +43,7 @@
 
 启动先进主菜单：一句话玩法说明 + 最佳纪录（分数 · 用时 · 评级 · **创下时间**）+ 操作摘要，回车开局。开局后按"走到哪教到哪"的原则给上下文提示——走近补给点才告诉你它能干嘛，不搞开局弹一堆字的说明书式教学。
 
-窗口会按屏幕大小自动降级（1280x960 → 1152x864 → 1024x768 → 896x672 → 800x600），HUD 与结算页在这四档尺寸下都做过"零重叠 + 全部落在窗口内"的审计（`scripts/audit_ui.py`）；屏幕比这还小时不要紧，字号优先缩、位置其次挪。
+窗口会按屏幕大小自动降级（1280x960 → 1152x864 → 1024x768 → 896x672 → 800x600），HUD、结算页与 Tab 全图在这四档尺寸 × 四个关卡（共 48 组）下都做过"零重叠 + 全部落在窗口内"的审计（`scripts/audit_ui.py`）；屏幕比这还小时不要紧，字号优先缩、位置其次挪。
 
 ## 技术栈
 
@@ -676,7 +676,7 @@ dist/潜行协议.exe --selfcheck        # 打完之后先自检，别靠人盯�
 
 ## 测试与 benchmark
 
-全部测试都在无窗口模式下跑（`SDL_VIDEODRIVER=dummy`），不需要显卡、不需要人看着。CI（`.github/workflows/ci.yml`）在 Python 3.11 和 3.13 上各跑一遍：16 个测试脚本 + UI 重叠审计 + 计分审计 + 关卡体检，任何一个返回非零就红。
+全部测试都在无窗口模式下跑（`SDL_VIDEODRIVER=dummy`），不需要显卡、不需要人看着。CI（`.github/workflows/ci.yml`）在 Python 3.11 和 3.13 上各跑一遍：21 个测试脚本 + UI 重叠审计 + 计分审计 + 关卡体检，任何一个返回非零就红。
 
 > 审计类脚本（`audit_ui` / `audit_routes` / `audit_difficulty` / `score_table`）都带退出码，所以它们能当门禁用，而不只是"打印一堆数字给人看"。这一条是刻意设计的：**只要一项检查需要人来判断"这个数字算不算问题"，它就会在第三次改动之后被忽略**。
 
@@ -696,7 +696,7 @@ python scripts/test_w15.py              # GOAP 搜查计划：顺序最优性 / 
 python scripts/test_w16.py              # 听觉代价场：绕行 vs 穿墙 / 厚岩传不过去 / 场缓存
 python scripts/test_w17.py              # 关卡抽象：注册表 / 每关连通与安全出生 / 目标点不串台
 python scripts/test_w18.py              # 主循环：踩撤离点→过场→自动进第 2 关（喂 dt，不跑真实时钟）
-python scripts/audit_ui.py              # UI 重叠体检：记录真实绘制落点并两两求交
+python scripts/audit_ui.py              # UI 体检：四关 × 四档窗口，记录真实落点并两两求交
 python scripts/score_table.py           # 计分体检：四种玩法各跑一局，逐局和设计公式对账
 python scripts/test_robustness.py       # 健壮性：崩溃留痕 / 存档容错 / 启动降级
 python scripts/audit_routes.py          # 拓扑体检：最小割（= 路线数）/ 门宽 / 主弧长度
