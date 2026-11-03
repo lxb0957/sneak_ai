@@ -55,6 +55,30 @@ def test_full_map_fits_every_level():
     print("[OK] 四关整图都放得进窗口")
 
 
+def test_full_map_fits_a_small_window():
+    """窗口被降级到 1024x768 时，整图也必须跟着缩。
+
+    这条是补的：第一版把 max_box 写死成 1160x760，在 1280x960 下没问题，
+    而笔记本上 `_create_window` 会降级到 1024x768 —— 那时 1104 宽的整图
+    比窗口还宽，直接被切掉两边，功能等于没做。
+    """
+    big_w, big_h, big_vw, big_vh = C.WINDOW_W, C.WINDOW_H, C.VIEW_W, C.VIEW_H
+    try:
+        C.WINDOW_W, C.WINDOW_H = 1024, 768
+        C.VIEW_W, C.VIEW_H = 1024 // C.TILE_SIZE, 768 // C.TILE_SIZE
+        for lv in L.LEVELS:
+            fm = FullMap(lv.build())
+            assert fm.w <= C.WINDOW_W - 40, (
+                f"1024x768 窗口下第 {lv.idx + 1} 关整图宽 {fm.w}，放不下")
+            assert fm.h <= C.WINDOW_H - 120, (
+                f"1024x768 窗口下第 {lv.idx + 1} 关整图高 {fm.h}，放不下")
+            assert fm.w // fm.tile == lv.build().w, "缩放档位不是整数倍"
+    finally:
+        C.WINDOW_W, C.WINDOW_H = big_w, big_h
+        C.VIEW_W, C.VIEW_H = big_vw, big_vh
+    print("[OK] 1024x768 的小窗口下整图也放得下")
+
+
 def test_full_map_covers_the_whole_grid():
     """"整图"必须是整张：少一格都叫没显示完。"""
     for lv in L.LEVELS:
@@ -134,6 +158,7 @@ def test_full_map_never_draws_enemies():
 def main():
     print("=== W21：全图（Tab） ===")
     test_full_map_fits_every_level()
+    test_full_map_fits_a_small_window()
     test_full_map_covers_the_whole_grid()
     test_tab_freezes_the_world()
     test_closing_the_map_resumes_the_world()

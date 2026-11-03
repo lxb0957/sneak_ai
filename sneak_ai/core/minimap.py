@@ -121,8 +121,13 @@ class FullMap:
     敌人不在上面，否则这张图就成了全图透视，潜行游戏紧张感的来源就没了。
     """
 
-    def __init__(self, grid, max_box: tuple = (1160, 760)):
+    def __init__(self, grid, max_box: tuple = None):
         self.grid = grid
+        if max_box is None:
+            # 必须从**实际**窗口推，不能写死 1160x760：
+            # `_create_window` 在笔记本/高 DPI 屏上会降级到 1024x768，
+            # 写死的尺寸会让整图比窗口还宽 —— 那正是这个功能要修的毛病。
+            max_box = (C.WINDOW_W - 80, C.WINDOW_H - 190)
         # 按整图能否塞进 max_box 选缩放档位，再用整数倍 —— 非整数倍会让墙线发虚
         fit = min(max_box[0] // max(grid.w, 1), max_box[1] // max(grid.h, 1))
         self.tile = max(FULL_TILE_MIN, min(fit, FULL_TILE_MAX))
