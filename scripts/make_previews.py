@@ -85,14 +85,14 @@ def main():
 
     met = _drive(g, 60 * 30, lambda w: nice(w, g.cam))
     g._render(1 / 60)
-    pygame.image.save(g.screen, str(ROOT / "assets" / "w6_gameplay.png"))
+    pygame.image.save(g.screen, str(ROOT / "assets" / "gameplay.png"))
 
     # 同一时刻切到 F1 调试视角
     g.debug.enabled = True
     g._render(1 / 60)
-    pygame.image.save(g.screen, str(ROOT / "assets" / "w6_debug.png"))
+    pygame.image.save(g.screen, str(ROOT / "assets" / "ai_debug_view.png"))
 
-    print(f"已生成 assets/w6_gameplay.png 与 w6_debug.png"
+    print(f"已生成 assets/gameplay.png 与 ai_debug_view.png"
           f"（t={g.world.elapsed:.1f}s，条件{'命中' if met else '未命中'}，"
           f"可见敌人 {g.world.seeing} 个，暴露度 {g.world.threat:.2f}）")
     pygame.quit()

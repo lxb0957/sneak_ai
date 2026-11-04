@@ -21,7 +21,7 @@
 
 | 玩家视角（暴露 HUD / 小地图 / 状态气泡） | F1 AI 调试视图（视野锥 / 听觉圈 / 角色标签） |
 |---|---|
-| ![玩法](assets/w6_gameplay.png) | ![调试](assets/w6_debug.png) |
+| ![玩法](assets/gameplay.png) | ![调试](assets/ai_debug_view.png) |
 
 按 **F1** 打开 AI 调试视图，能看到每个敌人的视野锥、听觉圈、行为标签（巡逻 / 调查 / 追击 / 包抄 / 封路）和实时可疑度。
 
@@ -676,7 +676,9 @@ dist/潜行协议.exe --selfcheck        # 打完之后先自检，别靠人盯�
 
 ## 测试与 benchmark
 
-全部测试都在无窗口模式下跑（`SDL_VIDEODRIVER=dummy`），不需要显卡、不需要人看着。CI（`.github/workflows/ci.yml`）在 Python 3.11 和 3.13 上各跑一遍：21 个测试脚本 + UI 重叠审计 + 计分审计 + 关卡体检，任何一个返回非零就红。
+全部测试都在无窗口模式下跑（`SDL_VIDEODRIVER=dummy`），不需要显卡、不需要人看着。CI（`.github/workflows/ci.yml`）在 Python 3.11 和 3.13 上各跑一遍：21 个测试脚本 + UI 重叠审计 + 计分审计 + 拓扑/难度体检，任何一个返回非零就红。
+
+> 文件名里的 `wNN` 是当时的开发周次（W3 / W6 / W7…），不是测试编号，所以编号不连续——中间缺的几周，测试被并进了相邻文件或随功能一起废弃了。排序按文件名，不按周次含义。
 
 > 审计类脚本（`audit_ui` / `audit_routes` / `audit_difficulty` / `score_table`）都带退出码，所以它们能当门禁用，而不只是"打印一堆数字给人看"。这一条是刻意设计的：**只要一项检查需要人来判断"这个数字算不算问题"，它就会在第三次改动之后被忽略**。
 
@@ -696,11 +698,18 @@ python scripts/test_w15.py              # GOAP 搜查计划：顺序最优性 / 
 python scripts/test_w16.py              # 听觉代价场：绕行 vs 穿墙 / 厚岩传不过去 / 场缓存
 python scripts/test_w17.py              # 关卡抽象：注册表 / 每关连通与安全出生 / 目标点不串台
 python scripts/test_w18.py              # 主循环：踩撤离点→过场→自动进第 2 关（喂 dt，不跑真实时钟）
+python scripts/test_w19.py              # 第 4 关总闸：黑灯真的缩短视野 / 一次性 / 会响 / 到点自愈
+python scripts/test_w20.py              # 难度尺子：同种子复现、异种子分叉、封门实验、重复巡逻线
+python scripts/test_w21.py              # Tab 全图：放得进窗口、覆盖整张图、打开冻结、图上无敌人
+python scripts/test_w22.py              # 相机边界：四方向边沿可达、玩家不出屏、目标点都在视野内
+python scripts/test_w23.py              # 布局审计自身：清单完整 / 全图只查越界
 python scripts/audit_ui.py              # UI 体检：四关 × 四档窗口，记录真实落点并两两求交
 python scripts/score_table.py           # 计分体检：四种玩法各跑一局，逐局和设计公式对账
 python scripts/test_robustness.py       # 健壮性：崩溃留痕 / 存档容错 / 启动降级
 python scripts/audit_routes.py          # 拓扑体检：最小割（= 路线数）/ 门宽 / 主弧长度
 python scripts/audit_difficulty.py      # 难度体检：门窗口率 / 三条弧取舍 / 硬走对照
+python scripts/audit_levels.py          # 绕路体检：最短路线 / 直线距离 / 绕路比
+python scripts/measure_levels.py        # 难度实测：每关 96 局、跨关同种子配对、Wilson 区间
 python scripts/diag_patrol.py 180        # 巡逻体检：谁卡墙、最长原地不动多久
 python scripts/botrun.py --aware        # 机器人纯潜行通关（能赢就是"关卡有解"的证明）
 python scripts/botrun.py --aware --level 1          # 指定关卡（0=哨站 1=环形枢纽 2=柱林中庭）

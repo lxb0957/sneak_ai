@@ -22,12 +22,6 @@ set "PY=python"
 call :check "%PY%"
 if "%OK%"=="1" goto run
 
-rem 4) author dev environment. Harmless for everyone else: the pygame
-rem    check simply fails and we fall through to the error message.
-set "PY=%USERPROFILE%\.workbuddy\binaries\python\envs\sneak\Scripts\python.exe"
-call :check "%PY%"
-if "%OK%"=="1" goto run
-
 echo [ERROR] No Python with pygame was found.
 echo.
 echo Tried, in order:
