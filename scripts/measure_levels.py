@@ -83,9 +83,24 @@ def main():
         lo, hi = wilson(wins, a.runs)
         avg_t = sum(times) / len(times) if times else 0.0
         rows[li] = (wins, lo, hi)
+        losses = a.runs - wins
+        hot = sorted(deaths.items(), key=lambda kv: -kv[1])[:3]
+        hot_s = "  ".join(
+            f"{k}x{v}={v / losses:.0%}" if losses else f"{k}x{v}"
+            for k, v in hot
+        ) or "-"
         print(f"L{li + 1} {LEVELS[li].name:<6} {wins:>3}/{a.runs} = "
               f"{wins / a.runs:5.1%}  95%CI[{lo:.0%},{hi:.0%}]  "
-              f"胜局均时 {avg_t:5.1f}s  最高死点 {sorted(deaths.items(), key=lambda kv: -kv[1])[:3]}")
+              f"胜局均时 {avg_t:5.1f}s  热死点 {hot_s}")
+        # 死点比胜率更能指出"错在哪"：一格吃掉 8% 以上败局，基本就是一道
+        # 卡在必经路上的门（v1.8.2 第 2 关 (33,5) 占 16%，v1.8d 第 3 关 (15,55) 占 17%）。
+        # 只提示、不判失败：阈值是经验值，具体那一格是不是设计意图要人看。
+        # 加 n >= 3 的下限：n=16 局时一格死 1 次就是 17%，光看占比会把小样本的
+        # 噪声全报成"死点集中"（第一次加这条时 6 个败局刷了 6 行告警）。
+        for pos, n in hot:
+            if n >= 3 and losses and n / losses >= 0.08:
+                print(f"  ! 死点集中：{pos} 一格吃掉 {n / losses:.0%} 的败局"
+                      f" —— 先查它是不是必经路上那道会转身的门")
 
     if len(levels) >= 2:
         for i in range(len(levels) - 1):
