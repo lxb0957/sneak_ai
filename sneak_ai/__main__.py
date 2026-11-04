@@ -770,65 +770,98 @@ def _show_crash(exc: BaseException, log) -> None:
         pass
 
 
-def _selfcheck(frames: int = 240) -> int:
-    """无窗口自检：跳过菜单，直接开一局真实对局跑几百帧。
+def _selfcheck(frames: int = 120) -> int:
+    """无窗口自检：跳过菜单，**每一关**各开一局真实对局跑几百帧。
 
     为什么需要它：onefile 打出来的 exe 一旦在**运行时**缺模块或资源，
     表现就是双击后一闪而过，什么线索都不留。而最容易被漏掉的恰恰是
-    "进了游戏才会走到"的那条路径 —— 地图烘焙、21 个敌人的 AI、整帧渲染。
+    "进了游戏才会走到"的那条路径 —— 地图烘焙、AI 的更新、整帧渲染。
     菜单能显示不代表游戏能玩。
 
+    为什么是每一关而不是只跑第 1 关：这条自检原来只 `Game()`（第 1 关），
+    而第 4 关是 92x42、有总闸、有黑暗视野、需要 Tab 全图 —— 相机边界那个
+    bug（把边界写死在 80x60，第 4 关最右 12 格永远进不了屏幕）就是
+    **打进 exe 里才会被玩家撞到**的那一类，只跑第 1 关的自检一个字都报不出来。
+    "只测第一关"在这份代码里已经犯过两次（UI 审计、关卡体检），这是第三次。
+
     所以这里不复用任何测试替身：真实 Game、真实按键、真实 update、
-    真实 _render（dummy 驱动下所有绘制代码照样会走一遍）。
+    真实 _render（dummy 驱动下所有绘制代码照样会走一遍），并且每关都验一次
+    "相机推得到地图东沿"和"Tab 全图能画"。
     打包后 `潜行协议.exe --selfcheck` 就能验一次，不用靠人盯着屏幕看。
     """
     # 必须赶在 Game() 里的 pygame.init() 之前设：video/audio 驱动是初始化时读的
     os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
     os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
-    print(f"[自检] 无窗口自检：{frames} 帧（≈{frames / 60:.1f}s 游戏时间）")
+    total = len(L.LEVELS)
+    print(f"[自检] 无窗口自检：{total} 关 × {frames} 帧（≈{frames / 60:.1f}s 游戏时间/关）")
+    fails = []
     try:
-        g = Game()
-        g.menu.active = False          # 跳过主菜单，直接进局
-        g._show_intro = False
-        p, w = g.player, g.world
-        start_p = (p.x, p.y)
-        enemy_start = [(e.x, e.y) for e in w.enemies]
-        print(f"[自检] 窗口 {C.WINDOW_W}x{C.WINDOW_H}  敌人 {len(w.enemies)}  "
-              f"补给 {len(w.pickups)}")
+        for lv in L.LEVELS:
+            g = Game(start_level=lv.idx)
+            g.menu.active = False          # 跳过主菜单，直接进局
+            g._show_intro = False
+            p, w = g.player, g.world
+            start_p = (p.x, p.y)
+            enemy_start = [(e.x, e.y) for e in w.enemies]
+            print(f"\n[自检] 第 {lv.idx + 1} 关「{lv.name}」 "
+                  f"{w.grid.w}x{w.grid.h}  敌人 {len(w.enemies)}  补给 {len(w.pickups)}")
 
-        dt = 1.0 / 60.0
-        # 一直往右走：给移动/碰撞/体力的整条链路施加真实输入，
-        # 而不是让世界"自己空转"——空转测不出输入到渲染的那一段。
-        p._keys = {pygame.K_d, pygame.K_LSHIFT}
-        try:
-            for _ in range(frames):
-                w.update(dt)
-                g._time_accum += dt
+            dt = 1.0 / 60.0
+            # 一直往右走：给移动/碰撞/体力的整条链路施加真实输入，
+            # 而不是让世界"自己空转"——空转测不出输入到渲染的那一段。
+            p._keys = {pygame.K_d, pygame.K_LSHIFT}
+            try:
+                for _ in range(frames):
+                    w.update(dt)
+                    g._time_accum += dt
+                    g._render(dt)
+            finally:
+                p._keys = set()
+
+            moved = math.hypot(p.x - start_p[0], p.y - start_p[1])
+            enemy_moved = sum(
+                1 for e, s in zip(w.enemies, enemy_start)
+                if math.hypot(e.x - s[0], e.y - s[1]) > 0.05
+            )
+            print(f"[自检]   玩家移动 {moved:.2f} 格 / 敌人动起来 {enemy_moved} 个")
+
+            if moved < 0.5:
+                fails.append(f"第 {lv.idx + 1} 关玩家几乎没动（{moved:.2f} 格）："
+                             f"输入→移动链路断了")
+            if enemy_moved == 0:
+                fails.append(f"第 {lv.idx + 1} 关没有一个敌人移动过：AI 更新没跑起来")
+
+            # 相机必须推得到东沿：这就是那个"看不到最右边"的 bug。
+            # 用真实 Game 的相机（边界由 _new_world 按关卡设好）。
+            for _ in range(180):
+                g.cam.follow(w.grid.w - 1.5, w.grid.h / 2, dt)
+            x1 = (g.cam.offset_x + C.WINDOW_W) / C.TILE_SIZE
+            if x1 < w.grid.w - 0.01:
+                fails.append(f"第 {lv.idx + 1} 关视口只到 x={x1:.1f}/{w.grid.w}："
+                             f"最右边 {w.grid.w - x1:.1f} 格永远看不到")
+
+            # Tab 全图：能画、且在窗口内（第 4 关 92 格宽，最需要它）
+            g.show_map = True
+            try:
                 g._render(dt)
-        finally:
-            p._keys = set()
+            finally:
+                g.show_map = False
+            fm = g.fullmap
+            if fm.w > C.WINDOW_W or fm.h > C.WINDOW_H:
+                fails.append(f"第 {lv.idx + 1} 关整图 {fm.w}x{fm.h} 比窗口 "
+                             f"{C.WINDOW_W}x{C.WINDOW_H} 还大：Tab 全图会被切掉")
+            print(f"[自检]   相机东沿 x={x1:.1f}/{w.grid.w}  "
+                  f"整图 {fm.w}x{fm.h}（{fm.tile}px/格）")
 
-        moved = math.hypot(p.x - start_p[0], p.y - start_p[1])
-        enemy_moved = sum(
-            1 for e, s in zip(w.enemies, enemy_start)
-            if math.hypot(e.x - s[0], e.y - s[1]) > 0.05
-        )
-        print(f"[自检] 玩家移动 {moved:.2f} 格 / 敌人动起来 {enemy_moved} 个 / "
-              f"状态 {w.state}")
-
-        fails = []
-        if moved < 0.5:
-            fails.append(f"玩家几乎没动（{moved:.2f} 格）：输入→移动链路断了")
-        if enemy_moved == 0:
-            fails.append("没有一个敌人移动过：AI 更新没跑起来")
         if fails:
             for msg in fails:
                 print(f"[自检] [FAIL] {msg}")
             return 1
         # 这里刻意不用 ✅ / ❌：Windows 控制台默认 GBK，emoji 编不出来会抛
         # UnicodeEncodeError —— 自检本身因此"失败"，比不打印还误导人。
-        print("[自检] [OK] 通过：导入、地图烘焙、AI 更新、整帧渲染都正常")
+        print(f"\n[自检] [OK] 通过：{total} 关的导入、地图烘焙、AI 更新、"
+              f"整帧渲染、相机边界、Tab 全图都正常")
         return 0
     except BaseException as exc:      # noqa: BLE001 —— 自检要把锅全接下来
         traceback.print_exc()
