@@ -92,6 +92,21 @@ def _danger_map(world):
                     w = (1.0 - step / (rng + 1)) * wmul
                     if w > danger.get((cx, cy), 0.0):
                         danger[(cx, cy)] = w
+
+    # 人本身也是一堵墙。第 5 关的门只有 1 格，那个人就站在那一格里：
+    # 只算视锥的话，寻路会认为"门口那格视野是空的"（他正背对着你），
+    # 于是规划出一条**从他身体里穿过去**的路线 —— 走到跟前被他收掉。
+    # 实测这就是第二道闸前那批败局的死法：玩家在 (40.9,17.57) 穿门而过，
+    # 岗在 (41.4,18.0)，两个圆心差 0.55 格 < 抓判定 0.6。
+    # 代价给到 3.0（视锥最大也只有 1.0）：绕开一个人永远比穿过他便宜。
+    # 只给"固定岗"加这条代价 —— 前四关没有固定岗，历史数字一格不动。
+    for e in world.enemies:
+        if not e.alive or len(e.patrol) != 1:
+            continue
+        for dx in range(-1, 2):
+            for dy in range(-1, 2):
+                cell = (int(e.x) + dx, int(e.y) + dy)
+                danger[cell] = max(danger.get(cell, 0.0), 3.0)
     return danger
 
 
@@ -232,6 +247,166 @@ def _body_would_be_seen(world, victim) -> bool:
         ) > 0.0:
             return True
     return False
+
+
+def _decoy_spot(world, p, blocker, path, pi):
+    """给"堵在门前的那个人"选一个石子落点（第 5 关的动词）。
+
+    三条约束，缺一条这个动作就只是浪费一颗石头：
+
+    1. **扔得到**：玩家到落点的直线不能被墙挡住 —— `plan_landing` 是沿直线
+       逐点步进的，中间有墙就会提前落地；
+    2. **他走得过去**：落点和他之间也不能隔墙。否则他听见了却过不去，
+       只会在门里原地打转，缺口照样堵着 —— 而玩家会以为"石头没用"；
+    3. **别引到自己路上**：落点要离接下来十几格路线尽量远。这条是核心：
+       没有它，机器人会朝正前方扔，把岗从门里引出来、正好堵在门外的
+       必经之路上，然后一头撞上去。
+
+    评分是"离路线多远 - 离他多远（目标 4.5 格）的偏差"。4.5 格是有讲究的：
+    太近（<3）他没真正离开那个门洞；太远（>6.5）他走到一半就放弃，
+    而且听觉定位误差（0.75 格）会让他搜错方向。
+    """
+    px, py = p.x, p.y
+    ahead = [(c[0] + 0.5, c[1] + 0.5) for c in path[pi:pi + 12]] or [(px, py)]
+    best, best_score = None, -1e9
+    for dx in range(-7, 8):
+        for dy in range(-7, 8):
+            tx, ty = blocker.x + dx, blocker.y + dy
+            if world.grid.is_wall(int(tx), int(ty)):
+                continue
+            d_blk = math.hypot(dx, dy)
+            if d_blk < 3.0 or d_blk > 6.5:
+                continue
+            # 玩家必须够得着（石头射程 7 格），并且中间不隔墙
+            if math.hypot(tx - px, ty - py) > C.STONE_RANGE - 0.5:
+                continue
+            if not _los_clear(world, (px, py), (tx, ty)):
+                continue
+            if not _los_clear(world, (blocker.x, blocker.y), (tx, ty)):
+                continue
+            d_path = min(math.hypot(tx - ax, ty - ay) for ax, ay in ahead)
+            # 除了离路线远，还要离**玩家自己**远：岗是朝落点走的，
+            # 落点太近等于把他请到自己脸上来。
+            d_me = math.hypot(tx - px, ty - py)
+            score = d_path + 0.5 * d_me - abs(d_blk - 4.5) * 0.5
+            if score > best_score:
+                best_score, best = score, (tx, ty)
+    return best
+
+
+def _post_threat(world, p, radius=6.0):
+    """离我最近的、**已经离开岗位、而且正朝着我**的固定岗。
+
+    这一关真正会杀人的不是"门里站着的那个人"，是"被你叫出来、正朝你走过来
+    的那个人"。但要小心把"自己刚骗出去的那个"也算进来 —— 那就变成
+    扔石头 → 他离岗 → 我后退 → 他回岗 → 我再扔 的死循环（实测过，机器人
+    在第 1 道闸前站满 200 秒，一颗石头都没换来一扇门）。
+
+    所以判据不是"他离岗了"，而是"他的视锥朝着我 / 已经贴到 2.5 格"：
+
+    · 朝我 = 我站在他的视野方向里，他下一步就会认出我 —— 那才该让；
+    · 背着我走 = 正是我花钱买的那 3 秒 —— 该往前走，不是后退。
+
+    只认单点巡逻，所以这条逻辑在前四关一次都不会触发（那里没有固定岗）。
+    """
+    best, best_d = None, 1e9
+    for e in world.enemies:
+        if not e.alive or len(e.patrol) != 1:
+            continue
+        d = math.hypot(e.x - p.x, e.y - p.y)
+        if d > radius or d > best_d:
+            continue
+        ox, oy = e.patrol[0]
+        if math.hypot(e.x - ox, e.y - oy) < 0.6:
+            continue                      # 还在岗位上：那是门，不是走过来的人
+        to_me = math.atan2(p.y - e.y, p.x - e.x)
+        delta = abs((to_me - e.facing + math.pi) % (2 * math.pi) - math.pi)
+        if d > 2.5 and delta > 1.1:
+            continue                      # 背对着我走开：窗口，不是威胁
+        best, best_d = e, d
+    return best
+
+
+def _retreat_spot(world, p, guard, goal=None):
+    """往后让的时候往哪站：离那个人越远越好，最好还隔着点东西。
+
+    为什么不直接"沿反方向退 N 格"：这一关房间里全是柱子，反方向可能是墙；
+    也不该退到"看不见他"就算完 —— 我要的是**他不往这边看**，所以优先挑
+    视线被打断的格子（柱子背后），其次才是"距离最远"。
+
+    还有一个必须扣分的项：**别往终点方向退**。第一版只按"离岗远"打分，
+    而岗被引到了西北，于是"离他最远"的格子正好在东南 —— 也就是门口。
+    机器人于是"往后退"退进了门里。往终点退等于往前送，这条要单独扣。
+    """
+    best, best_score = None, -1e9
+    d_goal0 = math.hypot(p.x - goal[0], p.y - goal[1]) if goal else 0.0
+    for dx in range(-7, 8):
+        for dy in range(-7, 8):
+            cx, cy = int(p.x) + dx, int(p.y) + dy
+            if world.grid.is_wall(cx, cy):
+                continue
+            tx, ty = cx + 0.5, cy + 0.5
+            d_g = math.hypot(tx - guard.x, ty - guard.y)
+            if d_g < 3.0:
+                continue
+            hidden = 0.0 if _los_clear(world, (guard.x, guard.y), (tx, ty)) else 6.0
+            d_me = math.hypot(tx - p.x, ty - p.y)
+            if d_me > 6.0:
+                continue
+            toward = max(0.0, d_goal0 - math.hypot(tx - goal[0], ty - goal[1])) if goal else 0.0
+            score = hidden + d_g - 0.6 * d_me - 1.2 * toward
+            if score > best_score:
+                best_score, best = score, (cx, cy)
+    return best
+
+
+def _post_in_path(world, path, pi, span=16):
+    """路径前方 span 格内**有没有**固定岗（不管多远）。给"要不要往前蹭"用。"""
+    ahead = {tuple(c) for c in path[pi:pi + span]}
+    return any(
+        e.alive and len(e.patrol) == 1 and (int(e.x), int(e.y)) in ahead
+        for e in world.enemies
+    )
+
+
+def _post_ahead(world, p, path, pi, span=16):
+    """路径前方 span 格内、堵在路上的**固定岗**（单点巡逻 = 站住不动的人）。
+
+    为什么只认固定岗：会巡逻的人等一会儿自己就走了，扔石头是浪费；
+    站住不动的人等不到，只能骗。这个判据让"提前扔石头"只发生在真的需要
+    的场合（第 5 关的关闸），而不是变成机器人一路乱扔。
+
+    为什么要在 GO 里就扔：HOLD 的触发条件是"前方 6 格被照着"，而岗的视野
+    是 6.5 格 —— 等它触发 HOLD，人已经站在视野边缘了；再往前一步就暴露，
+    站在原地又够不着（>8.5 格）。**窗口在"还看得见他、他还没看见你"
+    那一段**，所以必须提前动手。
+    """
+    ahead = {tuple(c) for c in path[pi:pi + span]}
+    best, best_d = None, 1e9
+    for e in world.enemies:
+        if not e.alive or len(e.patrol) > 1:
+            continue
+        if (int(e.x), int(e.y)) not in ahead:
+            continue
+        # 只认"还站在岗位上"的：一旦他被骗出去、正走在半路，门就不是锁着的
+        # 状态了 —— 这时候再朝他扔一颗，等于把刚买到的窗口重新关上
+        # （那正是"站 200 秒、扔 5 颗石头、一扇门也没过"的来源）。
+        ox, oy = e.patrol[0]
+        if math.hypot(e.x - ox, e.y - oy) > 1.2:
+            continue
+        d = math.hypot(e.x - p.x, e.y - p.y)
+        if d > 10.0 or d > best_d:
+            continue
+        # 这里**故意不查直线视线**。岗站在 1 格门的正中，也就是站在闸墙那一列
+        # 里；玩家只要没正对着门洞（比如站在门的南侧两格），从身体到身体连
+        # 一条直线，中间会切到闸墙的拐角 —— 直线被挡，可那条路明明走得通
+        # （路径就在 ahead 里，逐格验证过）。
+        # 实测代价：机器人站在 (39.4,20.8)、岗在 (40.5,17.5)、门在路径第 4 步，
+        # 因为这条直线判定被判成"看不见门里的人"，于是既不投石也不前进，
+        # 在第一道闸前站满 200 秒 —— 96 局里有 38 局是这么"输"的。
+        # 该不该扔由 `_decoy_spot` 决定（那里才有真正的可达性检查）。
+        best, best_d = e, d
+    return best
 
 
 def _pick_blocker(world, p, path, pi):
@@ -514,6 +689,17 @@ def run(aware=True, immune=False, budget=200.0, weight=7.0, verbose=False,
     legs, legs_done = [], 0   # 每段数据节点的到达时刻（见下面的分段打点）
     detour = None      # 当前正在绕路去拿的补给点（被追时会立刻丢弃）
     detour_t = 0.0
+    decoy_cd = 0.0     # 投石冷却：扔完等他走开，别把三颗石头在 1 秒内全扔出去
+    back_target = None # BACK 模式要退到哪一格（进入时算一次，别每帧重算）
+    # "硬着头皮过这道门"的剩余秒数。HOLD 等不出来（门里的人不会走开、石头也
+    # 用完了）时必须有个兜底动作，否则 HOLD→GO→HOLD 会一直弹到超时：
+    # 96 局里有 38 局就是这么"输"的 —— 一次没死、卡在第二道闸前 200 秒。
+    push_t = 0.0
+    # 这一关有没有"固定岗"（单点巡逻）。有固定岗，意味着走廊只有一条、
+    # 每一段的尽头都站着一个人 —— 那么"朝终点逃命"就是"朝下一个岗逃命"：
+    # 前四关那条"追兵比我慢，保持目标方向用走的甩开"的经验在这里是反的。
+    # 所以有固定岗的图，逃命改找**掩体**（_safe_path），而不是接着往东跑。
+    fixed_posts = any(len(e.patrol) == 1 for e in w.enemies)
 
     while t < budget and w.state in (C.STATE_INFILTRATE, C.STATE_EXFILTRATE):
         # 开局反应时间：人不会在读到关卡的第一帧就迈步。这段时间玩家原地不动，
@@ -546,6 +732,7 @@ def run(aware=True, immune=False, budget=200.0, weight=7.0, verbose=False,
             worst, watched, chased, nearest, max_susp = _threat(w, p)
             mode_t += 1 / 60
             replan -= 1 / 60
+            decoy_cd = max(0.0, decoy_cd - 1 / 60)
 
             # ---- 顺路补给：只在"绕一点点就够"时才绕，被追时一律不绕 ----
             if detour is not None and mode != "GO":
@@ -567,8 +754,14 @@ def run(aware=True, immune=False, budget=200.0, weight=7.0, verbose=False,
 
             if replan <= 0.0:
                 danger = _danger_map(w)
-                if mode == "FLEE" and flee_mode == "cover":
+                if mode == "FLEE" and (flee_mode == "cover" or fixed_posts):
                     path = _safe_path(w, danger, p, worst)
+                    pi = 0
+                elif mode == "BACK" and back_target is not None:
+                    # 往后让的时候目标不是终点，是"他看不见的那一格" ——
+                    # 用 _plan（不是 _safe_path）是因为退路要短、要直，
+                    # 绕远路等于在他的视锥里多待两秒。
+                    path = _plan(w, (p.x, p.y), back_target, danger, weight) or []
                     pi = 0
                 else:
                     # 逃命不等于往回跑：目标是"活着到终点"。
@@ -595,10 +788,34 @@ def run(aware=True, immune=False, budget=200.0, weight=7.0, verbose=False,
                 goal_near = math.hypot(path[pi][0] - target[0],
                                        path[pi][1] - target[1]) < 3.0
 
+            # 第 5 关的"提前骗"：还没被看见、路线上又有个站着不动的岗 ——
+            # 趁现在还在投石距离内先把石头扔出去。等走到他视野边缘再动手，
+            # 就变成"要么暴露、要么够不着"的二选一了。
+            if mode == "GO" and not watched and p.stones > 0 and decoy_cd <= 0.0:
+                blk = _post_ahead(w, p, path, pi)
+                if blk is not None:
+                    spot = _decoy_spot(w, p, blk, path, pi)
+                    if spot is not None and w.throw_stone(spot):
+                        decoy_cd = 3.2
+
+            # ---- 一个离了岗的固定岗朝我走过来：先往后让 ----
+            # 放在模式机之前，因为它同时压过"等"和"跑"：
+            # · 站着等（HOLD）会被他 6.5 格的视锥认出来 —— 实测这一关 41% 的败局
+            #   死在第二道闸前，就是"站在门口等，人被里面那个领出来了"；
+            # · 往东跑（FLEE 的目标方向）正好是往他的门里跑，等于迎上去。
+            # 唯一对的动作是人做的那种：退到他看不见的柱子背后，等他回岗。
+            threat = _post_threat(w, p)
+            if threat is not None and mode not in ("BACK", "FLEE"):
+                back_target = _retreat_spot(w, p, threat, target)
+                if back_target is not None:
+                    mode, mode_t, replan = "BACK", 0.0, 0.0
+
+            push_t = max(0.0, push_t - 1 / 60)
+
             if mode == "GO":
                 if watched and (chased or nearest < 5.0):
                     mode, mode_t, replan = "FLEE", 0.0, 0.0
-                elif ahead > 0.25 and not goal_near:
+                elif ahead > 0.25 and not goal_near and push_t <= 0.0:
                     # 前方被照着：先决定是"等"还是"退"
                     if danger_here > 0.05:
                         mode, mode_t, replan = "FLEE", 0.0, 0.0
@@ -610,6 +827,16 @@ def run(aware=True, immune=False, budget=200.0, weight=7.0, verbose=False,
                     mode, mode_t, replan = "FLEE", 0.0, 0.0
                 elif ahead <= 0.20:
                     mode, mode_t, replan = "GO", 0.0, 0.0
+                elif mode_t > 1.6 and p.stones > 0 and decoy_cd <= 0.0:
+                    # 等了 1.6 秒门还不开：门口那个人不是"会走开的巡逻"，
+                    # 是"钉在门上的固定岗"（第 5 关）。枪能解决，但石头更便宜 ——
+                    # 子弹有限、尸体还会引来搜查，而一颗石头只是让他走过去看一眼。
+                    # 先石头、后枪，这个顺序本身就是"代价从小到大"。
+                    blocker = _post_ahead(w, p, path, pi)
+                    if blocker is not None:
+                        spot = _decoy_spot(w, p, blocker, path, pi)
+                        if spot is not None and w.throw_stone(spot):
+                            decoy_cd = 3.2   # 给石头飞 + 他走过去的时间，别连扔
                 elif armed and mode_t > 1.2 and p.ammo > 0:
                     # 等了 1.2 秒门还是不开：说明门口那个人不会自己走开。
                     # 这才是武器的正确用法 —— 不是"清场"，是"把锁撬开一次"。
@@ -621,7 +848,10 @@ def run(aware=True, immune=False, budget=200.0, weight=7.0, verbose=False,
                         w.shoot((blocker.x, blocker.y))
                         mode, mode_t, replan = "GO", 0.0, 0.0
                 elif mode_t > 8.0:
-                    # 没枪 / 打不着 / 一直有人看着：要么换个门，要么硬着头皮走
+                    # 没枪 / 打不着 / 一直有人看着：要么换个门，要么硬着头皮走。
+                    # 这里必须给 GO 一段"免于再回 HOLD"的窗口，否则它会立刻被
+                    # 同一个 ahead 判据顶回 HOLD，两个人来回弹到超时。
+                    push_t = 4.0
                     mode, mode_t, replan = "GO", 0.0, 0.0
             elif mode == "FLEE":
                 # 被逼到墙角才开枪：这是最后手段，不是常规解法。
@@ -647,9 +877,39 @@ def run(aware=True, immune=False, budget=200.0, weight=7.0, verbose=False,
                     mode, mode_t, replan = "FLEE", 0.0, 0.0
                 elif max_susp < 0.12 or mode_t > 6.0:
                     mode, mode_t, replan = "GO", 0.0, 0.0
+            elif mode == "BACK":
+                # 退到柱子背后，**等他回岗**再动 —— 判据是"他站回去了"，
+                # 不是我退了几格/退了几秒。这一关的节奏是"他回岗我才敢过"，
+                # 站在半路看他还在外面晃就再退一步。
+                if watched and nearest < 2.2:
+                    mode, mode_t, replan = "FLEE", 0.0, 0.0   # 已经贴上来了，先跑
+                elif threat is None or mode_t > 8.0:
+                    mode, mode_t, replan = "HOLD", 0.0, 0.0
 
             if mode in ("HIDE", "HOLD"):
-                p._keys = {pygame.K_LSHIFT}
+                # 手里有石头，却够不着那个人（>7 格）—— 那就往前蹭。
+                # 这是真人在这里做的动作：先站在视线外，再一格一格挪到
+                # "抬手能扔到"的位置。不蹭的话，机器人会站在 11 格外
+                # HOLD 到超时，看起来像关卡"过不去"，其实是尺子不会走路。
+                # 三条同时成立才蹭：
+                #   1. 前方（16 格内）确实有个**固定岗**挡路 —— 没有的话，
+                #      这里就该像以前一样站着等，别乱动（前四关全靠这个"等"）；
+                #   2. 现在还够不着（`_post_ahead` 为空）—— 够得着就直接扔；
+                #   3. 下一格基本没人看得见（danger <= 0.12）。
+                # 第一版漏了第 1 条，于是**所有关卡**的机器人在门口都开始往前蹭，
+                # 第 1 关胜率当场从 75% 掉到 62%。
+                creep = (mode == "HOLD" and p.stones > 0 and decoy_cd <= 0.0
+                         and pi < len(path)
+                         and danger.get(tuple(path[pi]), 0.0) <= 0.12
+                         and _post_in_path(w, path, pi)
+                         and _post_ahead(w, p, path, pi) is None)
+                if creep:
+                    tx, ty = path[pi][0] + 0.5, path[pi][1] + 0.5
+                    if math.hypot(tx - p.x, ty - p.y) < 0.4:
+                        pi += 1
+                    p._keys = _keys_toward(p, tx, ty, sneak=True)
+                else:
+                    p._keys = {pygame.K_LSHIFT}
             elif pi < len(path):
                 tx, ty = path[pi][0] + 0.5, path[pi][1] + 0.5
                 if math.hypot(tx - p.x, ty - p.y) < 0.4:

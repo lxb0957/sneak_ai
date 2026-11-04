@@ -959,7 +959,7 @@ class World:
                      or e.role != Role.PATROL)
             if not aware:
                 continue
-            if (e.x - px) ** 2 + (e.y - py) ** 2 < 0.6 ** 2:
+            if (e.x - px) ** 2 + (e.y - py) ** 2 < C.CAPTURE_DIST ** 2:
                 # 护盾优先于失败判定：贴上来的人被当场击倒，玩家活着但暴露了
                 if getattr(self.player, "shield", 0) > 0:
                     self._apply_shield_break(e)

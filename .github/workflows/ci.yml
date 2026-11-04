@@ -42,7 +42,7 @@ jobs:
           pip install -r requirements.txt
 
       # 入口自检：走的就是打包时用的那个入口文件（launch.py），
-      # 四关各跑 120 帧真实对局 + 整帧渲染（含相机边界、Tab 全图尺寸）。
+      # 每关各跑 120 帧真实对局 + 整帧渲染（含相机边界、Tab 全图尺寸）。
       # 它防的不是"某个函数算错"，
       # 而是"游戏根本起不来"——例如入口换成包内 __main__.py 之后
       # 相对导入整片崩掉，而所有单测都还是绿的。
@@ -58,7 +58,7 @@ jobs:
           for t in smoke_test test_pathing test_w3 test_gameplay test_w6 test_w7 \
                    test_w8 test_w10 test_w11 test_w12 test_w14 test_w15 test_w16 \
                    test_w17 test_w18 test_w19 test_w20 test_w21 test_w22 \
-                   test_w23 test_robustness; do
+                   test_w23 test_w24 test_robustness; do
             echo "===== $t ====="
             python scripts/$t.py
           done

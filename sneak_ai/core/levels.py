@@ -15,6 +15,7 @@ build_demo_map / build_spawn_and_patrols），目标点则是 `constants.py` 里
 """
 
 from dataclasses import dataclass
+import math
 from typing import Callable, Tuple
 
 from .. import constants as C
@@ -994,6 +995,153 @@ def switchyard_patrols() -> tuple:
     )
 
 
+# ============ 第 5 关：查验站 ============
+# 前四关的动词：
+#   1~3 关：**等** —— 等人转身、等门开、等两道巡逻错开；
+#   4   关：**造** —— 拉闸，用黑暗和噪音给自己造一个窗口；
+#   5   关：**骗** —— 往别处扔一颗石子，让"守着那扇门的人"离开那扇门。
+#
+# 为什么还要再换一次：第 4 关之后，"等"和"造"都已经用到极限，继续压难度
+# 只能让玩家把同一件事做得更精确。而"骗"改的是**威胁的位置** ——
+# 前四关你是在一张给定的警戒图里找缝，这一关你亲手把警戒图挪一格。
+#
+# 结构就一句话：**一人一扇门**。
+# 一条 92 格的大厅被四道关闸切成五段，每道闸只留 3 格缺口，缺口正中站一个
+# **固定岗**：不巡逻、面朝来路、只在岗前 ±40° 来回看。他从头到尾不离开那
+# 3 格 —— 所以"等"字诀在这里失效：你等不到他走开，只能让他走开。
+GATE_W, GATE_H = 100, 37
+GATE_HALL = (2, 6, 96, 30)      # 大厅：x=2..96, y=6..30
+GATE_HOLE = (17, 17)            # 缺口 y 区间（1 格：这扇门就是那个人的岗位）
+GATE_XS = (22, 40, 58, 76)      # 四道中继关闸
+GATE_SPAWN = (4.5, 18.5)
+GATE_NODE = (90.5, 18.5)        # 东端数据舱
+GATE_EXFIL = (95.5, 18.5)       # 数据舱东侧就是出口：这一关只能往前
+# 五个固定岗：(格点 x, 格点 y, 面朝弧度)。math.pi = 朝西 = 朝来路。
+# 前四个守关闸缺口，第五个守数据舱。
+#
+# 岗就站在那**唯一一格**的正中（y=17.5）。这不是"堵门"，这就是岗位：
+# 缺口净宽 1 格，岗身宽 0.7，玩家要过就必须经过格心 —— 距他 0.5 格，
+# 而抓判定是 0.75（`C.CAPTURE_DIST`）。所以"趁他转头那一下挤过去"
+# 在几何上不成立：他看不看得见你是运气，撞不撞得上你是必然。
+# 能过的唯一办法，是让那一格空出来。
+GATE_POSTS = (
+    (22, 17, math.pi),
+    (40, 17, math.pi),
+    (58, 17, math.pi),
+    (76, 17, math.pi),
+    (86, 18, math.pi),
+)
+
+# 货箱一律贴着房间的四个角，**不压中线 y=18**：那条线是玩家和岗对话的地方，
+# 摆上箱子就变成"隔着掩体扔石头"，这个动词就退化成了"躲在箱子后面"。
+GATE_COVER = (
+    (6, 8, 3, 2), (6, 25, 3, 2), (16, 8, 2, 3), (16, 25, 2, 3),
+    (26, 9, 3, 2), (34, 25, 3, 2), (29, 27, 2, 2),
+    (44, 8, 2, 3), (52, 8, 3, 2), (45, 26, 3, 2), (53, 25, 2, 2),
+    (62, 9, 3, 2), (70, 25, 2, 3), (64, 26, 2, 2),
+    (79, 9, 2, 3), (85, 26, 3, 2), (92, 8, 2, 2),
+    # ---- 中线的上下各一根大柱（3x3），给"被追时绕一圈断视线"留余地 ----
+    # 没有它们的时候，机器人被发现一次就是必死：房间 17x25 是个空盒子，
+    # 唯一的出口站着一个人，追兵 4.2 格/s 跟着你绕，26 秒连锁死三次。
+    # 柱子不挡主路（y=18），它们的作用是**在房间里造出两个可以绕的转角** ——
+    # 这是"被发现之后还能活"和"被发现就结算"之间唯一的差别。
+    (9, 12, 3, 3), (9, 22, 3, 3),
+    (28, 12, 3, 3), (28, 22, 3, 3),
+    (46, 12, 3, 3), (46, 22, 3, 3),
+    (64, 12, 3, 3), (64, 22, 3, 3),
+)
+
+# 石子堆**摆在主路上**，这是这一关唯一一次破例。
+# 前四关的补给全在支路，因为补给是"绕一步换资源"；但这一关的石头不是奖励，
+# 是**弹药** —— 五道闸要五颗，初始只带三颗，不捡就走不完。把它藏进角落，
+# 等于把"资源管理"变成"猜作者把钥匙放哪了"。
+# 位置统一压在中线两侧 2 格内：顺路踩到，不打断"接近岗 → 找角度 → 投石"的节奏。
+GATE_PICKUPS = (
+    (13, 9, "ammo"),
+    (36, 20, "stone"),    # R2：第一道闸之后的补充
+    (34, 28, "shield"),
+    (55, 20, "stone"),    # R3
+    (43, 10, "ammo"),
+    (72, 20, "stone"),    # R4
+    (61, 28, "shield"),
+    (92, 20, "stone"),    # R5：数据室前最后一笔
+    (88, 27, "ammo"),
+)
+
+GATE_DOORS = tuple(
+    ((gx, GATE_HOLE[0], gx, GATE_HOLE[1]), f"第 {i + 1} 道闸")
+    for i, gx in enumerate(GATE_XS)
+)
+
+
+def build_gatehouse() -> GridMap:
+    """100x37 的"查验站"：一条 92 格大厅，被四道关闸切成五段。"""
+    m = GridMap.filled(GATE_W, GATE_H)
+    carve(m, *GATE_HALL)
+
+    # 关闸：1 格厚的横墙，中间留 3 格缺口。
+    # 为什么是 1 格厚：厚墙会在缺口里形成一条 2 格深的"隧道"，玩家走进去
+    # 就既看不见岗、岗也看不见他，反而变成"闭眼冲过去"；1 格厚时，
+    # 缺口是一个**截面**，玩家在进缺口前必须先把站在截面上的那个人处理掉。
+    for gx in GATE_XS:
+        fill(m, gx, GATE_HALL[1], gx, GATE_HOLE[0] - 1)
+        fill(m, gx, GATE_HOLE[1] + 1, gx, GATE_HALL[3])
+
+    protected = set()
+    # 缺口两侧各 1 格必须空：这是玩家"穿过"的那条线，也是投石要越过的线。
+    for gx in GATE_XS:
+        protected.update(
+            (gx + dx, y)
+            for dx in range(-1, 2)
+            for y in range(GATE_HOLE[0] - 1, GATE_HOLE[1] + 2)
+        )
+    # 岗位 ±2 必须空：哨兵得站得下，玩家得看得见他站在哪。
+    for (px, py, _f) in GATE_POSTS:
+        protected.update((px + dx, py + dy) for dx in range(-2, 3) for dy in range(-2, 3))
+    protected.update(
+        (int(GATE_SPAWN[0]) + dx, int(GATE_SPAWN[1]) + dy)
+        for dx in range(-2, 3) for dy in range(-2, 3)
+    )
+    protected.update(
+        (int(GATE_NODE[0]) + dx, int(GATE_NODE[1]) + dy)
+        for dx in range(-1, 2) for dy in range(-1, 2)
+    )
+    protected.update(
+        (int(GATE_EXFIL[0]) + dx, int(GATE_EXFIL[1]) + dy)
+        for dx in range(-1, 2) for dy in range(-1, 2)
+    )
+    for (px, py, _k) in GATE_PICKUPS:
+        protected.update((px + dx, py + dy) for dx in range(-1, 2) for dy in range(-1, 2))
+    add_cover(m, GATE_COVER, (int(GATE_SPAWN[0]), int(GATE_SPAWN[1])), protected)
+
+    _check_connected(m, int(GATE_SPAWN[0]), int(GATE_SPAWN[1]))
+    return m
+
+
+def gatehouse_patrols() -> tuple:
+    """第 5 关的 9 个哨位：5 个固定岗 + 4 个流动哨。
+
+    **固定岗用"单点巡逻"表达**。`Enemy._act_patrol` 的语义是"到点 → 停下环视
+    → 走向下一个点"，单点列表里下一个点就是自己，于是行为正好是"站住 + 左右看"。
+    这不是新写的一套逻辑，是把已有的"到点站岗"用到了它的极限。
+
+    五个岗都在缺口正中（y=18）、朝西（朝来路）。他们不离开那 3 格 ——
+    所以玩家等不到"他走开"的那一刻，必须自己造出来。
+    """
+    return (
+        # ---- 五道固定岗 ----
+        *((px, py, ((px, py),)) for (px, py, _f) in GATE_POSTS),
+        # ---- 两个流动哨：只走房间的**南半区**（y=22..27），不穿中线 ----
+        # 第一版在四个房间各放一个、南北贯通（y=8..27）。实测机器人过完第一道
+        # 闸就被它们逼进 FLEE，然后一路冲到第二道闸前面撞死 —— 主难点
+        # （五次骗岗）被次难点（躲巡逻）整个盖住了。
+        # 让它们留在南半区之后，房间的主路（y=18）重新变成"你和岗"的对话，
+        # 而它们负责抬高投石时的站位成本：你要往南侧找角度，就得先看它在哪。
+        (48, 27, ((48, 27), (48, 22))),
+        (82, 27, ((82, 27), (82, 22))),
+    )
+
+
 # ============ 注册表 ============
 @dataclass(frozen=True)
 class Level:
@@ -1034,6 +1182,20 @@ class Level:
     power: tuple = ()
     # (黑灯时长 s, 黑灯期视野系数, 拉闸噪音半径 格)
     blackout: Tuple[float, float, float] = (0.0, 1.0, 0.0)
+    # 固定岗：(格点 x, 格点 y, 面朝弧度)。空 = 这一关没有固定岗。
+    # 为什么不塞进 patrols：patrols 描述的是"走动的路线"，这里描述的是"站住的
+    # 姿势"。混在一起写，读的人会以为朝向也参与巡逻推进；分开之后消费点只有
+    # 一处（建敌人时设 facing），格式简单到不值得去扩展 patrols 的三元组。
+    posts: tuple = ()
+    # 开局携带的石子数。默认 3（全局值）；第 5 关给 5 —— 那一关五道闸，
+    # 一颗石头换一道闸，带 3 颗就是"两关一定过不去"。资源量是关卡参数，
+    # 不该由全局常量决定：同一件工具在不同关卡里的**需求量**本来就不同。
+    stones: int = C.STONE_COUNT
+    # 补给是不是**通关必需**（而不是可选奖励）。
+    # 第 5 关：五颗石子换五道闸，不捡就走不完 —— 测量时机器人必须开 loot，
+    # 否则量出来的不是"这关多难"，是"没带够弹药有多难"。
+    # 前四关为 False：那里的补给是"绕一步换资源"，捡不捡是策略差异。
+    resource_critical: bool = False
 
     @property
     def terminal(self) -> tuple:
@@ -1117,6 +1279,33 @@ LEVELS = (
         alert_duration=45.0,
         power=(SWITCH_BREAKER, SWITCH_BREAKER_2),
         blackout=SWITCH_BLACKOUT,
+    ),
+    Level(
+        idx=4,
+        name="查验站",
+        subtitle="五道关闸，每道闸只有一个人 —— 他不走开，你就让他走开",
+        build=build_gatehouse,
+        patrols=gatehouse_patrols,
+        pickups=GATE_PICKUPS,
+        doors=GATE_DOORS,
+        terminals=(GATE_NODE,),
+        exfil=GATE_EXFIL,
+        spawn=GATE_SPAWN,
+        # 路线 92 格 + 五次"骗开岗"各算 8 秒。S 线定在 70 秒，
+        # 是"五次都一次扔准、不回头捡石头"的一局；B 线 165 秒允许扔偏两三次。
+        par=(70.0, 105.0, 165.0),
+        # 追兵速度回到"走路能拉开"的区间（4.2 < 走路 4.4）。
+        # 这一关和前四关的结构不一样：每道闸都是**死路**，唯一的出口站着一个人。
+        # 4.6 的追兵意味着"被发现 → 无处可去 → 必死"，实测机器人 26 秒就
+        # 连锁死三次；而这一关真正该惩罚的是"骗错了、扔偏了"，
+        # 不是"被看见过"——被发现之后要还有"退回去、等他搜完"这条路。
+        chase=3.8,
+        alert_speed=4.2,
+        alert_view=10.0,
+        alert_duration=40.0,
+        posts=GATE_POSTS,
+        stones=5,           # 五道闸，一颗换一道
+        resource_critical=True,
     ),
 )
 

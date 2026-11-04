@@ -109,27 +109,57 @@ def test_every_level_builds_and_is_connected():
     print("[OK] 每关都能构建、全图连通、三个关键点都在地上且位于格中心")
 
 
-def test_doors_are_two_cells_wide():
-    """门 / 闸必须统一 2 格宽：1 格憋屈，3 格以上就失去了"一次只过一个人"。"""
+def test_doors_are_one_or_two_cells_wide():
+    """门必须是 1 或 2 格宽，且 **1 格门必须有固定岗驻守**。
+
+    2 格是默认：一次只过一个人，但不憋屈（3 格以上就不是门了，是"绕过去"）。
+
+    1 格门单独存在时是坏设计 —— 玩家会被一个 1 格宽的洞卡得反复对不准，
+    这不是难度，是操作摩擦。所以它只在一种情况下允许：**洞里站着一个人**。
+    那时这扇门不是"通道"，是"岗位"：玩家的第一个动作本来就是"让守门的人
+    走开"（第 5 关），门的宽窄不再影响手感，反而决定了"他能不能被绕过去"。
+
+    这条比原来那句"必须是 2 格"更精确：它没有放宽，而是把"为什么窄"
+    也变成了可检查的条件。
+    """
     for lv in L.LEVELS:
         grid = lv.build()
-        widths = []
+        posts = [(px + 0.5, py + 0.5) for (px, py, _f) in lv.posts]
         for (hole, name) in lv.doors:
             x0, y0, x1, y1 = hole
             cells = [(x, y) for y in range(y0, y1 + 1) for x in range(x0, x1 + 1)]
             assert all(not grid.is_wall(*c) for c in cells), f"{lv.name} 的 {name} 没挖开"
-            widths.append(len(cells))
-        assert set(widths) == {2}, f"{lv.name} 门宽不统一：{sorted(set(widths))}"
-    print(f"[OK] {sum(len(lv.doors) for lv in L.LEVELS)} 道门/闸全部 2 格宽")
+            assert len(cells) in (1, 2), (
+                f"{lv.name} 的 {name} 是 {len(cells)} 格 —— 门只能 1 或 2 格"
+            )
+            if len(cells) == 1:
+                cx, cy = cells[0][0] + 0.5, cells[0][1] + 0.5
+                assert any(math.hypot(px - cx, py - cy) < 0.2 for px, py in posts), (
+                    f"{lv.name} 的 {name} 只有 1 格宽，却没有固定岗站在里面 —— "
+                    f"那会变成一个纯操作摩擦的窄洞"
+                )
+    print(f"[OK] {sum(len(lv.doors) for lv in L.LEVELS)} 道门/闸：2 格宽，"
+          f"或 1 格宽且有岗驻守")
 
 
 def test_no_patrol_point_blocks_a_door():
+    """多点巡逻的哨兵不许离门 <3 格；**固定岗**是这条规则唯一的例外。
+
+    为什么开这个口子：前四关的"堵门"是事故 —— 一个会走来走去的哨兵恰好停在
+    唯一入口前，玩家只能等他走开，等不到就是死路（第 4 关数据舱北门就这么被
+    焊死过）。第 5 关的固定岗是**设计**：他站定不走，而玩家手里有石子可以让
+    他走（行为断言在 `test_w24.test_fixed_post_leaves_when_noise`）。
+    区别不在"离门多近"，而在**玩家有没有第二个动词**。
+    """
     for lv in L.LEVELS:
         grid = lv.build()
         _spawn, cfg = L.spawn_and_patrols(lv, grid)
+        posts = {(round(px + 0.5, 3), round(py + 0.5, 3)) for (px, py, _f) in lv.posts}
         dcells = door_cells(lv)
         bad = []
         for i, (x, y, pts) in enumerate(cfg):
+            if (round(x, 3), round(y, 3)) in posts:
+                continue      # 固定岗：允许守门，见 docstring
             for tag, p in [("出生点", (x, y))] + [("巡逻点", q) for q in pts]:
                 near = min(dcells, key=lambda c: math.hypot(c[0] - p[0], c[1] - p[1]))
                 dist = math.hypot(near[0] - p[0], near[1] - p[1])
@@ -137,7 +167,7 @@ def test_no_patrol_point_blocks_a_door():
                     bad.append((lv.name, i, tag,
                                 (round(p[0], 1), round(p[1], 1)), near[2], round(dist, 1)))
         assert not bad, f"这些哨兵会堵门：{bad}"
-    print("[OK] 每关的哨兵站位全部离门/闸 ≥3 格（不堵门）")
+    print("[OK] 每关的巡逻哨兵全部离门/闸 ≥3 格（固定岗除外，那是设计）")
 
 
 def _corridor_span(grid, x, y, dx, dy):
@@ -337,7 +367,7 @@ def main():
     print("=== W17：关卡抽象（每一关都体检）===")
     test_registry_is_sane()
     test_every_level_builds_and_is_connected()
-    test_doors_are_two_cells_wide()
+    test_doors_are_one_or_two_cells_wide()
     test_no_patrol_point_blocks_a_door()
     test_no_patrol_pinned_in_a_narrow_corridor()
     test_pickups_are_reachable_and_fair()

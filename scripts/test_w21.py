@@ -52,7 +52,7 @@ def test_full_map_fits_every_level():
         # 上方要留标题和一行说明，下方留面板内边距
         assert fm.h <= C.WINDOW_H - 120, (
             f"第 {lv.idx + 1} 关整图高 {fm.h} > 窗口 {C.WINDOW_H} 的可用高度")
-    print("[OK] 四关整图都放得进窗口")
+    print(f"[OK] {len(L.LEVELS)} 关整图都放得进窗口")
 
 
 def test_full_map_fits_a_small_window():

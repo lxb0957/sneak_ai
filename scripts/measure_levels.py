@@ -16,7 +16,7 @@
 跑法：
     python scripts/measure_levels.py --levels 0,1,2,3 --runs 96 --seed 31337
 
-经验值（这台机器）：单进程约 55 局/分钟；四关并行各 96 局约 6 分钟。
+经验值（这台机器）：单进程约 55 局/分钟；五关并行各 96 局约 9 分钟。
 判读：两个区间重叠 = 分不出高低，别下结论。
 """
 import argparse
@@ -62,6 +62,10 @@ def main():
     ap.add_argument("--seed", type=int, default=777)
     ap.add_argument("--jitter", type=float, default=1.0)
     ap.add_argument("--tag", default="")
+    # 补给开关：auto = 按关卡数据（第 5 关开、前四关关）。
+    # 为什么要能强制 off：第 5 关是唯一开 loot 的一关，那个数字和前四关
+    # 的口径不一样。要回答"五关摆在一起，谁更难"就得用同一个口径再量一遍。
+    ap.add_argument("--loot", choices=("auto", "on", "off"), default="auto")
     a = ap.parse_args()
 
     levels = [int(x) for x in a.levels.split(",")]
@@ -69,37 +73,57 @@ def main():
     # 各关抽到的相位序列会互相污染，就不再是"配对"了。
     rows = {}
     for li in levels:
-        wins, times, deaths = 0, [], {}
+        wins, times = 0, []
+        # 战死和超时必须分开记。混在一起会骗人：第 5 关第一版 96 局里
+        # 38 局"败局"其实是**卡在第二道闸前站满 200 秒**（一次没死），
+        # 而工具把它们当死点打出来，指向的是一格根本没杀过人的空地。
+        # 一格吃掉多少败局 → 死点；一格吃掉多少次超时 → 卡点。
+        # 两者的修法完全不同（一个是关卡卡口，一个是尺子不会走）。
+        deaths, stalls = {}, {}
         for i in range(a.runs):
             rng = random.Random(a.seed + i) if a.jitter > 0 else None
             delay = rng.uniform(0.0, a.jitter) if rng else 0.0
-            r = botrun.run(level=li, rng=rng, start_delay=delay)
+            # 补给是不是通关必需，写在这一关的数据上（Level.resource_critical）。
+            # 第 5 关五颗石子换五道闸：不开 loot 量到的是"没带够弹药有多难"，
+            # 不是"这关多难"。前四关仍按老规矩（不捡），历史数字才可比。
+            loot = (LEVELS[li].resource_critical if a.loot == "auto"
+                    else a.loot == "on")
+            r = botrun.run(level=li, rng=rng, start_delay=delay, loot=loot)
             if r["state"] == C.STATE_VICTORY:
                 wins += 1
                 times.append(r["time"])
-            else:
+            elif r["state"] == C.STATE_DEFEAT:
                 key = r["pos"]
                 deaths[key] = deaths.get(key, 0) + 1
+            else:
+                key = r["pos"]
+                stalls[key] = stalls.get(key, 0) + 1
         lo, hi = wilson(wins, a.runs)
         avg_t = sum(times) / len(times) if times else 0.0
         rows[li] = (wins, lo, hi)
         losses = a.runs - wins
+        n_dead = sum(deaths.values())
         hot = sorted(deaths.items(), key=lambda kv: -kv[1])[:3]
         hot_s = "  ".join(
-            f"{k}x{v}={v / losses:.0%}" if losses else f"{k}x{v}"
+            f"{k}x{v}={v / n_dead:.0%}" if n_dead else f"{k}x{v}"
             for k, v in hot
         ) or "-"
+        stall_n = sum(stalls.values())
         print(f"L{li + 1} {LEVELS[li].name:<6} {wins:>3}/{a.runs} = "
               f"{wins / a.runs:5.1%}  95%CI[{lo:.0%},{hi:.0%}]  "
-              f"胜局均时 {avg_t:5.1f}s  热死点 {hot_s}")
+              f"胜局均时 {avg_t:5.1f}s  战死 {losses - stall_n} / 卡死 {stall_n}"
+              f"  热死点 {hot_s}")
+        if stall_n:
+            hot_stall = sorted(stalls.items(), key=lambda kv: -kv[1])[:2]
+            print("  卡点 " + "  ".join(f"{k}x{v}" for k, v in hot_stall))
         # 死点比胜率更能指出"错在哪"：一格吃掉 8% 以上败局，基本就是一道
         # 卡在必经路上的门（v1.8.2 第 2 关 (33,5) 占 16%，v1.8d 第 3 关 (15,55) 占 17%）。
         # 只提示、不判失败：阈值是经验值，具体那一格是不是设计意图要人看。
         # 加 n >= 3 的下限：n=16 局时一格死 1 次就是 17%，光看占比会把小样本的
         # 噪声全报成"死点集中"（第一次加这条时 6 个败局刷了 6 行告警）。
         for pos, n in hot:
-            if n >= 3 and losses and n / losses >= 0.08:
-                print(f"  ! 死点集中：{pos} 一格吃掉 {n / losses:.0%} 的败局"
+            if n >= 3 and n_dead and n / n_dead >= 0.08:
+                print(f"  ! 死点集中：{pos} 一格吃掉 {n / n_dead:.0%} 的战死"
                       f" —— 先查它是不是必经路上那道会转身的门")
 
     if len(levels) >= 2:

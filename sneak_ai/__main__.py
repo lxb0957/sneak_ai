@@ -176,6 +176,9 @@ class Game:
 
         player_spawn, enemy_cfg = L.spawn_and_patrols(lv, self.world.grid)
         self.player = Player(player_spawn[0], player_spawn[1])
+        # 石子是**关卡参数**（Level.stones），不是全局常量：第 5 关五道闸，
+        # 带默认的 3 颗就是明摆着过不去。写在建完玩家之后、第一帧之前。
+        self.player.stones = lv.stones
         self.world.player = self.player
         self.world.enemies = [
             Enemy(x, y, patrol=pts, perception=self.perception,
@@ -183,6 +186,22 @@ class Game:
                   alert_speed=lv.alert_speed, alert_view=lv.alert_view)
             for (x, y, pts) in enemy_cfg
         ]
+        # 固定岗的朝向（第 5 关起）：关卡数据给的是"站住的姿势"，而 Enemy 默认
+        # 朝东（+x）。按坐标匹配而不是按列表下标 —— 两边都用同一套格点坐标，
+        # 中间不管怎么 snap / 排序都不会错位。
+        # 这一处必须设在**建完敌人之后、第一帧之前**：Enemy 的环视基准是在
+        # 第一次到点时才锁定的（_start_dwell），晚一帧设就等于把第一岗的
+        # 初始朝向留在东边，玩家一进房间就被一个"面朝出口"的岗看着。
+        # 同时记进 post_facing：被骗走之后走回来，他要恢复这个朝向，
+        # 而不是接着"走回来的方向"继续看（_start_dwell 里有实测记录）。
+        if lv.posts:
+            posts = {(round(px + 0.5, 3), round(py + 0.5, 3)): face
+                     for (px, py, face) in lv.posts}
+            for e in self.world.enemies:
+                face = posts.get((round(e.x, 3), round(e.y, 3)))
+                if face is not None:
+                    e.facing = face
+                    e.post_facing = face
         self.world.alert_duration = lv.alert_duration
         # 总闸：坐标已经是连续的格中心（关卡里就按坐标写），不再 +0.5。
         self.world.power = [
@@ -334,7 +353,14 @@ class Game:
                 # 第二关起不重复基础教学，改成一句"这张图想让你紧张什么"。
                 lv = L.LEVELS[self.level_index]
                 msg = f"第 {lv.idx + 1} 关 · {lv.name}　{lv.subtitle}"
-            self.hud.show_tip(msg, life=5.0)
+                # 有固定岗的关卡（第 5 关）：把新动词直接说出来。
+                # 这一关的门只有 1 格、里面站着一个人，"等"是等不到的 ——
+                # 如果开场不点名"Q 扔石头"，玩家会在第一道闸前面站到超时，
+                # 然后以为这关坏了。字幕里那句"你就让他走开"是给知道怎么
+                # 走开的人看的；对第一次来的人，动词必须有名字。
+                if lv.posts:
+                    msg += "　·　Q 扔石头，把他引开"
+            self.hud.show_tip(msg, life=6.0)
         p = self.world.player
         TIPS = {
             "ammo": "弹药包：走近自动补 2 发（上限 8）",

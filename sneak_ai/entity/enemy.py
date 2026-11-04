@@ -59,6 +59,14 @@ class Enemy:
         self._patrol_idx = (
             int(abs(x) * 7 + abs(y) * 13) % len(self.patrol) if self.patrol else 0
         )
+        # 上一次站岗的巡逻点下标。环视基准只在**换点**时更新 —— 见 _start_dwell。
+        self._dwell_point = -1
+        # 固定岗的"岗位朝向"（第 5 关起由关卡数据给）：None = 普通巡逻兵，
+        # 朝向跟着走；有值 = 这个人守着一个点，回到岗位就该面朝来路。
+        # 为什么必须单独存一份：环视基准取的是"我到点时朝哪儿"，而一个被骗
+        # 走又走回来的岗，回到岗位时朝的是**他走回来的方向**（多半是斜着，
+        # 甚至正对着你离开的那条走廊）。见 _start_dwell。
+        self.post_facing = None
 
         self.perception = perception
         self.suspicion = 0.0       # 每个敌人独立的可疑度
@@ -568,9 +576,32 @@ class Enemy:
         return Status.SUCCESS
 
     def _start_dwell(self) -> None:
-        """到达巡逻点：停表 + 记录基准朝向（环视从这里左右摆）。"""
+        """到达巡逻点：停表 + 记录基准朝向（环视从这里左右摆）。
+
+        **基准只在"真的换了岗点"时更新。** 原来每次到点都无条件
+        `_dwell_face = self.facing`，而这一刻 facing 正落在上一轮摆动的极值上，
+        于是下一轮从这个偏移再摆一次 —— 基准每 1.6 秒单向漂 +40°。
+        单点站岗的哨兵因此 14 秒内原地转了 231°，看上去像"慢慢转身巡视"，
+        实际是个罗盘。多点巡逻看不出来（换点本来就该朝新方向），
+        但第 5 关的固定岗是"守着这扇门、只在门前来回看"，基准一漂就直接破功。
+        """
         self._dwell = C.PATROL_PAUSE
-        self._dwell_face = self.facing
+        if self.post_facing is not None and len(self.patrol) == 1:
+            # 固定岗回岗：恢复"面朝来路"。
+            #
+            # 不这么做的话，基准取的是"我走回来的方向"：第 5 关实测，被骗去
+            # 西北看一眼的岗走回来时朝东南 ~+45°，环视又在基准上摆 ±40°，
+            # 于是他的视野锥正好盖住"你刚过去的那条走廊东侧"。玩家在 6.9 格
+            # 外、本来在视野外 0.4 格，就因为这个朝向被揪住 —— 一局里 41% 的
+            # 败局死在第二道闸前，全是因为岗回岗后朝东看了。
+            # 关卡数据里那句 `math.pi = 朝西 = 朝来路` 必须是真的，否则
+            # 玩家读到的"这扇门有人守着、他面朝你"就是一句假话。
+            self.facing = self.post_facing
+            self._dwell_face = self.post_facing
+            self._dwell_point = self._patrol_idx
+        elif self._dwell_point != self._patrol_idx:
+            self._dwell_face = self.facing
+            self._dwell_point = self._patrol_idx
         self._dwell_t = 0.0
         self._path = None
         self._path_target = None
