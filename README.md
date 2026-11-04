@@ -744,6 +744,8 @@ sneak_ai/
 │   └── __main__.py    # 游戏主循环
 ├── assets/            # 图表、演示 GIF、预览图
 ├── scripts/           # 测试与 benchmark
+├── launch.py          # 打包入口（PyInstaller 从这里起，不能用包内 __main__.py）
+├── build_exe.py       # 打 Windows 单文件 exe
 └── run.bat            # Windows 一键启动
 ```
 
