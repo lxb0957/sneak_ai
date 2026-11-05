@@ -7,6 +7,11 @@
 *.cmd text eol=crlf
 *.sh  text eol=lf
 
+# 工作流必须 LF：里面的 `run:` 会原样变成 shell 脚本，
+# 行尾多一个 \r 就变成「找不到命令：python\r」这种只发生在 CI 上的怪错。
+*.yml  text eol=lf
+*.yaml text eol=lf
+
 # 二进制：git 不要试图 diff / 转换
 *.gif  binary
 *.png  binary
