@@ -29,11 +29,20 @@
 
 用法：
     pip install pyinstaller
-    python build_exe.py
+    python build_exe.py                  # 本地产物：dist/潜行协议.exe
+    python build_exe.py --name Foo-v1.0  # 指定产物名（发布流水线用）
 
 产物：dist/潜行协议.exe（Windows）/ dist/StealthProtocol（其它平台）
+
+5. **`--name` 是给发布流水线准备的，不是为了好看**。CI 里产物要立刻被上传、
+   还要出现在下载链接里，名字必须带版本号；而默认名是中文的「潜行协议」。
+   中文文件名本身没问题，但"在 PowerShell 里重命名一个中文文件、再把结果
+   交给下一个 shell 步骤"这条路上，编码（cp936 / cp65001）随时能咬人一口。
+   与其在流水线里跟编码搏斗，不如让打包器一开始就产出最终名字 ——
+   中文名留给双击玩的人，ASCII 名给机器。
 """
 
+import argparse
 import os
 import sys
 from pathlib import Path
@@ -41,10 +50,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-NAME = "StealthProtocol" if os.name != "nt" else "潜行协议"
+DEFAULT_NAME = "StealthProtocol" if os.name != "nt" else "潜行协议"
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser(description="打包成单文件 exe")
+    ap.add_argument("--name", default=DEFAULT_NAME,
+                    help=f"产物文件名（不含扩展名），默认 {DEFAULT_NAME}")
+    a = ap.parse_args()
+    name = a.name
+
     try:
         import PyInstaller.__main__ as pyi
     except ImportError:
@@ -58,7 +73,7 @@ def main() -> int:
         # crash.log 都来不及写，表现就是控制台一闪）。详见 launch.py。
         str(ROOT / "launch.py"),
         "--paths", str(ROOT),
-        "--name", NAME,
+        "--name", name,
         "--onefile",
         "--noconfirm",
         "--clean",
@@ -76,7 +91,7 @@ def main() -> int:
     if os.name == "nt":
         args.append("--console")     # 保留控制台：崩了至少看得见
     pyi.run(args)
-    out = ROOT / "dist" / (NAME + (".exe" if os.name == "nt" else ""))
+    out = ROOT / "dist" / (name + (".exe" if os.name == "nt" else ""))
     if out.exists():
         # 别用 emoji：中文 Windows 的 cmd 是 GBK，✅ 会抛 UnicodeEncodeError，
         # 于是"打包成功"的最后一行把自己搞成非零退出 —— 看起来像失败。

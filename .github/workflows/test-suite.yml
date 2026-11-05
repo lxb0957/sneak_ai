@@ -1,0 +1,107 @@
+name: Test Suite
+
+# 一条可复用的测试门禁。
+#
+# 为什么把它从 ci.yml 里拆出来：**同一批测试现在有两个消费者** ——
+# 每次 push / PR 要跑（ci.yml），每个 tag 发布之前也要跑（release.yml）。
+# 两份 yml 各抄一遍清单，迟早会漂：加了 test_w27 只改了一边，
+# 于是"发布前测试全绿"这句话就只对 push 成立，对 tag 不成立。
+# 而这种漂移不会报错，它只会让某一版悄悄带着没跑过的测试发出去。
+#
+# 清单只在这里写一次，两边都 `uses:` 它。
+#
+# 顺带一个副作用要记着：调用方的 check 名会变成 `<调用 job 名> / <本 job 名> (pyX.Y)`，
+# 比原来的 `test (pyX.Y)` 多一层前缀。如果哪天给分支保护配了必过检查，
+# 要按新名字填，否则保护会形同虚设。
+
+on:
+  workflow_call:
+    inputs:
+      python-versions:
+        description: '要跑的 Python 版本（JSON 数组字符串）。发布门禁只跑一个版本，push/PR 跑两个。'
+        type: string
+        default: '["3.11", "3.13"]'
+      ref:
+        description: '要测哪个提交。留空 = 触发本次 workflow 的那个 ref。'
+        type: string
+        default: ''
+
+env:
+  SDL_VIDEODRIVER: dummy
+  SDL_AUDIODRIVER: dummy
+
+jobs:
+  test:
+    name: test (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ${{ fromJSON(inputs.python-versions) }}
+
+    steps:
+      # ref 是给"手动重发旧版本"准备的：那种场景下触发 workflow 的分支 HEAD
+      # 未必是 tag 指向的提交，而门禁测的和打包打的必须是同一个 commit ——
+      # 否则"测试通过才发布"这条承诺在手动路径上就是空的。
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      # 字体是唯一的系统级依赖：HUD 里写的是微软雅黑/黑体，
+      # 两个都不在 GitHub 的 runner 上，缺了之后 pygame 会退回默认字体 ——
+      # 布局审计照样能跑（它读的是真实渲染的矩形），但截图和 README 图会完全不同。
+      # 所以这里显式装 Noto CJK，让字体回退链在 CI 上也落到一个中文字体上。
+      - name: 安装中文字体
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-noto-cjk
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # 入口自检：走的就是打包时用的那个入口文件（launch.py），
+      # 每关各跑 120 帧真实对局 + 整帧渲染（含相机边界、Tab 全图尺寸）。
+      # 它防的不是"某个函数算错"，
+      # 而是"游戏根本起不来"——例如入口换成包内 __main__.py 之后
+      # 相对导入整片崩掉，而所有单测都还是绿的。
+      - name: 入口自检
+        run: python launch.py --selfcheck
+
+      # 每个脚本都是独立进程：一个崩了不影响后面继续跑，
+      # 最后再统一看退出码 —— 这样一次 CI 就能拿到"哪几项挂了"的完整清单，
+      # 而不是修一个、推一次、再发现下一个。
+      - name: 单元 / 回归测试
+        run: |
+          set -e
+          for t in smoke_test test_pathing test_w3 test_gameplay test_w6 test_w7 \
+                   test_w8 test_w10 test_w11 test_w12 test_w14 test_w15 test_w16 \
+                   test_w17 test_w18 test_w19 test_w20 test_w21 test_w22 \
+                   test_w23 test_w24 test_w25 test_w26 test_w27 test_robustness; do
+            echo "===== $t ====="
+            python scripts/$t.py
+          done
+
+      # 下面这三项是"审计"而不是"单测"：它们不检查函数对不对，
+      # 检查的是"画出来、算出来之后还有没有自相矛盾的地方"。
+      # 布局审计是有退出码的门禁：任何一处 UI 重叠都会让 CI 失败。
+      # 它比截图比对稳定得多 —— 比的是"两块文字有没有相交"，不是像素。
+      - name: UI 重叠审计
+        run: python scripts/audit_ui.py
+
+      # 计分审计：四种玩法各跑一局，逐局和独立实现的设计公式对账。
+      # 跑一次约 40 秒（机器人全速模拟，不开窗口），放在 CI 里能挡住
+      # "改了权重但没同步公式"这类回归。
+      - name: 计分审计
+        run: python scripts/score_table.py
+
+      - name: 关卡拓扑 / 难度体检
+        run: |
+          python scripts/audit_routes.py
+          python scripts/audit_difficulty.py

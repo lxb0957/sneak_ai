@@ -1,80 +1,15 @@
 name: CI
 
+# 这个文件现在只负责"什么时候测"，不负责"测什么"。
+# 测什么全在 test-suite.yml —— 因为发布流水线（release.yml）要跑的是同一批测试，
+# 清单写两份就会漂（详见那边的注释）。
+
 on:
   push:
     branches: [main, master]
   pull_request:
   workflow_dispatch:
 
-env:
-  SDL_VIDEODRIVER: dummy
-  SDL_AUDIODRIVER: dummy
-
 jobs:
   test:
-    name: test (py${{ matrix.python }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ["3.11", "3.13"]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python }}
-          cache: pip
-
-      # 字体是唯一的系统级依赖：HUD 里写的是微软雅黑/黑体，
-      # 两个都不在 GitHub 的 runner 上，缺了之后 pygame 会退回默认字体 ——
-      # 布局审计照样能跑（它读的是真实渲染的矩形），但截图和 README 图会完全不同。
-      # 所以这里显式装 Noto CJK，让字体回退链在 CI 上也落到一个中文字体上。
-      - name: 安装中文字体
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y fonts-noto-cjk
-
-      - name: 安装依赖
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      # 入口自检：走的就是打包时用的那个入口文件（launch.py），
-      # 每关各跑 120 帧真实对局 + 整帧渲染（含相机边界、Tab 全图尺寸）。
-      # 它防的不是"某个函数算错"，
-      # 而是"游戏根本起不来"——例如入口换成包内 __main__.py 之后
-      # 相对导入整片崩掉，而所有单测都还是绿的。
-      - name: 入口自检
-        run: python launch.py --selfcheck
-
-      # 每个脚本都是独立进程：一个崩了不影响后面继续跑，
-      # 最后再统一看退出码 —— 这样一次 CI 就能拿到"哪几项挂了"的完整清单，
-      # 而不是修一个、推一次、再发现下一个。
-      - name: 单元 / 回归测试
-        run: |
-          set -e
-          for t in smoke_test test_pathing test_w3 test_gameplay test_w6 test_w7 \
-                   test_w8 test_w10 test_w11 test_w12 test_w14 test_w15 test_w16 \
-                   test_w17 test_w18 test_w19 test_w20 test_w21 test_w22 \
-                   test_w23 test_w24 test_w25 test_w26 test_w27 test_robustness; do
-            echo "===== $t ====="
-            python scripts/$t.py
-          done
-
-      # 布局审计是有退出码的门禁：任何一处 UI 重叠都会让 CI 失败。
-      # 它比截图比对稳定得多 —— 比的是"两块文字有没有相交"，不是像素。
-      - name: UI 重叠审计
-        run: python scripts/audit_ui.py
-
-      # 计分审计：四种玩法各跑一局，逐局和独立实现的设计公式对账。
-      # 跑一次约 40 秒（机器人全速模拟，不开窗口），放在 CI 里能挡住
-      # "改了权重但没同步公式"这类回归。
-      - name: 计分审计
-        run: python scripts/score_table.py
-
-      - name: 关卡拓扑 / 难度体检
-        run: |
-          python scripts/audit_routes.py
-          python scripts/audit_difficulty.py
+    uses: ./.github/workflows/test-suite.yml
