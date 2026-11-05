@@ -161,6 +161,15 @@ jobs:
           } > rel/notes_full.md
           tail -12 rel/notes_full.md
 
+      # 幂等不是"顺手加的便利"，是**修复的入口**。
+      #
+      # 这里不用 `gh release view` 判断"存在与否"，而是直接试创建、撞了再更新。
+      # 原因是踩出来的：上一次运行的 `gh release create` 建好了 draft、附件也传完了，
+      # 最后一步「把 draft 转成已发布」被 GitHub 回了一个 500。
+      # 于是仓库里留下一个 draft —— 而 `gh release view` 对 draft 的可见性
+      # 跟 tag 状态纠缠不清，"存在与否"这个判断本身就成了不确定的。
+      # **别问"它存在吗"，直接问"我能不能建；建不了说明已经有，那就更新"。**
+      # 这样无论上次停在哪一步（没建 / 建了 draft / 已发布），都能收敛到同一个终态。
       - name: 建 / 更新 Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -168,15 +177,20 @@ jobs:
         run: |
           set -euo pipefail
           TITLE=$(cat rel/title.txt)
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "::notice::$TAG 已有 Release，更新正文并覆盖附件"
-            gh release edit "$TAG" --title "$TITLE" --notes-file rel/notes_full.md
+          ERR=$(mktemp)
+          if gh release create "$TAG" dist/*.exe \
+               --title "$TITLE" --notes-file rel/notes_full.md --verify-tag 2>"$ERR"; then
+            echo "::notice::已新建 Release $TAG"
+          elif grep -qiE "already_exists|already exists|HTTP 422" "$ERR"; then
+            echo "::notice::$TAG 的 Release 已存在（可能是上次失败留下的 draft），改为更新"
+            # --draft=false 必须有：上次可能停在"draft 已建、还没发布"，
+            # 只 edit 正文的话，附件在、版本却永远不对外可见。
+            gh release edit "$TAG" --title "$TITLE" --notes-file rel/notes_full.md --draft=false
             gh release upload "$TAG" dist/*.exe --clobber
           else
-            gh release create "$TAG" dist/*.exe \
-              --title "$TITLE" \
-              --notes-file rel/notes_full.md \
-              --verify-tag
+            echo "::error::创建 Release 失败（不是 already_exists，是真错误）"
+            cat "$ERR"
+            exit 1
           fi
-          gh release view "$TAG" --json url,assets \
-            --template '{{.url}}{{"\n"}}{{range .assets}}{{.name}} {{.size}}B{{"\n"}}{{end}}'
+          gh release view "$TAG" --json url,isDraft,assets \
+            --template '{{.url}}  draft={{.isDraft}}{{"\n"}}{{range .assets}}{{.name}} {{.size}}B{{"\n"}}{{end}}'
