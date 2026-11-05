@@ -99,6 +99,11 @@ class Enemy:
         self._search_i = 0
         self._search_origin = None  # 计划依据的最后已知位置（漂了要重规划）
         self._plan_saw = None       # 排计划时"看见过没有"，用来判断计划是否过期
+        # 协同分配的搜索位：跟丢之后由 World 把几个哨兵的搜索点沿"他跑的方向"
+        # 铺开，避免三个人扎堆搜同一片。None = 没被分工，用我自己的记忆点。
+        self.search_slot = None
+        self._plan_slot = None      # 排计划时用的是哪个搜索位（变了要重排）
+        self._belief_heading = None # 从队友情报里接过来的"他往哪跑"
         # 本轮"起疑事件"里有没有真的看见过人。
         # 只有真看见过，才值得去翻角落；只是听到脚步，看到记忆点就够了 ——
         # 否则一次路过就能让半个走廊的哨兵离岗去搜箱子，玩家读不出规律。
@@ -364,6 +369,39 @@ class Enemy:
             self.grace = C.RESPAWN_GRACE
         world.events.append("respawn")
 
+    def note_belief(self, pos, heading=None) -> None:
+        """从队友的报警里接过一条情报：他刚才在这儿、往那边跑。
+
+        为什么不覆盖"我自己看见过"的记忆：目击者的坐标比转述的更新，
+        而谣言的时效性只由转过几手决定 —— 这一条不写清楚，就会出现
+        "自己明明贴脸看见了，却被队友的旧坐标叫走"。
+
+        **固定岗不接转述。** 这是给第 5 关留的适用条件，不是通用优化：
+        那一关的动词是"让守着门的那个人走开" —— 岗哨的全部难度来自
+        "他站在那儿，你只能骗他"。一旦允许他接队友的坐标，他就自己走了，
+        这道门也就不存在了。实测（96 局）：L5 从 51.0% 掉到 32.3%，
+        区间 [24,42] 与改动前的 [41,61] 不重叠 —— 不是噪声，是关卡语法被抵掉了。
+        单人岗哨"只听得见自己的耳朵"，这一条同时也符合关卡数据里的语义
+        （单点巡逻 = 站住 + 环视，`_start_dwell` 回岗时还要恢复岗位朝向）。
+        """
+        if pos is None or self.is_fixed_post:
+            return
+        if self._last_seen is None or not self._seen_this_episode:
+            self._last_seen = (float(pos[0]), float(pos[1]))
+            self._seen_this_episode = False
+            if heading is not None:
+                self._belief_heading = tuple(heading)
+
+    @property
+    def is_fixed_post(self) -> bool:
+        """固定岗 = 只有一个巡逻点的哨兵。
+
+        复用 `Enemy._act_patrol` 的退化行为（下一个点就是自己 → 站住 + 环视），
+        而不是新加一个 `is_fixed` 字段：字段要在关卡数据里逐个标、还要和
+        `post_facing` 保持同步，两处说法迟早会不一致。
+        """
+        return len(self.patrol) == 1
+
     # ============ 感知 ============
     def _update_senses(self, dt, world, player) -> None:
         self.sees_player = False
@@ -402,6 +440,11 @@ class Enemy:
             if see > 0.0:
                 self._last_seen = (player.x, player.y)
                 self._seen_this_episode = True
+                # 自己的眼睛优先：队友分的搜索位是"猜他在哪"，而我刚看见他。
+                # 不清的话，我会先走向那个扇形点、再折回来 —— 玩家看到的就是
+                # "他明明看见我了，却转身走了"。
+                self.search_slot = None
+                self._belief_heading = None
             elif hear >= 0.18 and self._noise_lock <= 0.0:
                 guess = self._heard_point(player.pos, dist, world.grid)
                 if guess is not None:
@@ -526,6 +569,9 @@ class Enemy:
             return True
         if self._plan_saw != self._seen_this_episode:
             return True
+        # 被重新分了搜索位：旧计划走向的是别人已经负责的地方，必须重排
+        if self._plan_slot != self.search_slot:
+            return True
         return (
             math.hypot(
                 self._last_seen[0] - self._search_origin[0],
@@ -540,14 +586,16 @@ class Enemy:
         没真看见过人的（只听到脚步 / 被队友喊了一声）只查记忆点本身：
         翻角落是有代价的（离岗、堵路），得由"差点抓到你"来换。
         """
+        anchor = self.search_slot or self._last_seen
         spots = (
-            find_hiding_spots(world.grid, self._last_seen)
+            find_hiding_spots(world.grid, anchor)
             if self._seen_this_episode
             else []
         )
-        self._search_steps = build_search_plan(self.pos, self._last_seen, spots)
+        self._search_steps = build_search_plan(self.pos, anchor, spots)
         self._search_i = 0
         self._search_origin = self._last_seen
+        self._plan_slot = self.search_slot
         self._plan_saw = self._seen_this_episode
 
     def _drop_step_point(self, idx: int) -> None:
@@ -615,6 +663,8 @@ class Enemy:
         self._path_failed_for = None
         self._clear_search_plan()
         self._seen_this_episode = False
+        self.search_slot = None
+        self._belief_heading = None
         self.suspicion = min(self.suspicion, C.SUSPICION_CURIOUS - 0.05)
 
     # ============ 行为 3：巡逻 ============

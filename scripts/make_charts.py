@@ -68,7 +68,7 @@ def chart_metrics():
     metrics = ["平均发现时间\n(秒)", "追击捕获率\n(%)", "潜行绕后\n成功率(%)", "协同分散度\n(格)"]
     # 数值来自 scripts/benchmark_ai_metrics.py（30 局平均）
     # 数据来自 scripts/benchmark_ai_metrics.py 的实际输出
-    values = [1.57, 100.0, 100.0, 3.90]
+    values = [1.62, 100.0, 100.0, 3.81]
     colors = ["#378ADD", "#1D9E75", "#639922", "#BA7517"]
 
     fig, ax = plt.subplots(figsize=(6.5, 4))

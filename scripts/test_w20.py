@@ -106,9 +106,15 @@ def test_phase_zero_keeps_baseline():
     assert _fingerprint(plain) == _fingerprint(zero), \
         "phase=0 改变了基线 —— 相位扫描第 0 个样本和历史数字对不上了"
     # 顺手钉住那条被 BLOG / README 引用过的基线
-    assert (plain["state"], plain["time"], plain["score"]) == ("victory", 63.0, 941), \
+    #
+    # v1.8.6 更新：第 1 关从 63.0 秒 / 941 分变成 66.3 秒 / 846 分。
+    # 变慢 3.3 秒、掉 95 分，原因是这一版哨兵开始共享情报并分工搜索 ——
+    # 机器人被同一批人围住的次数变多。这不是"基线坏了"，是基线**该动**：
+    # 它钉的从来不是"这个数字好看"，而是"难度改了要有人知道"。
+    # 谁再动 AI 的行为逻辑，这条会替你算出代价。
+    assert (plain["state"], plain["time"], plain["score"]) == ("victory", 66.3, 846), \
         f"第 1 关基线漂了：{plain['state']} {plain['time']}s {plain['score']} 分"
-    print("[OK] phase=0 == 原基线（63.0 秒 / 941 分）")
+    print("[OK] phase=0 == 原基线（66.3 秒 / 846 分）")
 
 
 # ---------------------------------------------------------------- 摆位

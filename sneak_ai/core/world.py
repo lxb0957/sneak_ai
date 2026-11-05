@@ -13,6 +13,7 @@ from typing import Dict, List
 
 from .. import constants as C
 from ..ai.coordination import Role
+from ..ai.search_plan import find_hiding_spots
 from ..ai.trace import Trace, describe
 from ..entity.stone import Stone, plan_landing
 from ..perception.sound import SoundField
@@ -85,6 +86,15 @@ class World:
     alert_left: float = 0.0    # 警觉封锁剩余时间（秒）
     last_known: tuple = None   # 全队最后确知玩家位置（流场目标，不用真实坐标）
     last_known_age: float = 0.0  # 距上次确知过了多久（秒）
+    # 最后一次目击时玩家在往哪个方向走（单位向量）。没有它，被喊来的哨兵只知道
+    # "他刚才在这儿"，于是三个人各自从这一点出发、各自找同样的藏身点 ——
+    # 三个人搜同一片，另外三面没人。方向这条信息只值一个减法，却是"扇形搜索"
+    # 唯一的依据。
+    belief_heading: tuple = (1.0, 0.0)
+    # 分工搜索的节流与锚点：搜索位不该每帧重排（会抖），也不该等太久
+    # （人跑远了扇形还停在原地）
+    _slot_anchor: tuple = None
+    _slot_cd: float = 0.0
     has_data: bool = False     # 是否已取得数据
     taken: List[int] = field(default_factory=list)  # 已取的数据节点下标（按取得顺序）
     elapsed: float = 0.0       # 本局用时（秒）
@@ -272,10 +282,22 @@ class World:
         # 而这种 bug 不会让任何测试变红，只会让手感和数值表对不上。
         if self.player is not None:
             if any(e.sees_player for e in self.enemies):
-                self.last_known = (self.player.x, self.player.y)
+                new = (self.player.x, self.player.y)
+                if self.last_known is not None:
+                    dx, dy = new[0] - self.last_known[0], new[1] - self.last_known[1]
+                    d = math.hypot(dx, dy)
+                    # 位移太小多半是同一次目击的抖动：方向会变成噪声，
+                    # 而它决定整个扇形朝哪开 —— 宁可保留上一次的方向。
+                    if d > 0.5:
+                        self.belief_heading = (dx / d, dy / d)
+                self.last_known = new
                 self.last_known_age = 0.0
             else:
                 self.last_known_age += dt
+
+        # 分工搜索：必须在敌人更新**之后**（`searching` 是这一帧的行为树选的），
+        # 又在捕获判定之前（他可能正好走进某个搜索位）。
+        self._assign_search_slots(dt)
 
         # 捕获判定必须放在敌人刷新完感知**之后**：
         # 它要读"这个哨兵知不知道你在附近"（sees_player / suspicion），
@@ -349,6 +371,116 @@ class World:
                         f"{prev_role.value} → {e.role.value}：去 {e.target_tile}",
                         who=e.tag, frm=prev_role.value, to=e.role.value)
 
+    def _assign_search_slots(self, dt: float) -> None:
+        """跟丢之后把搜索点铺开：一个人去信念点，其余沿"他跑的方向"散开。
+
+        为什么需要这一步：报警传的是同一个坐标，于是被喊醒的三个哨兵各自排一份
+        几乎一样的搜查计划 —— 三份叠在同一片区域，扇形的另外三面没人。
+        这跟"多派几个人"是两件事：人多不一定覆盖得广，覆盖得广才叫搜。
+
+        只在"确实在搜"的人之间分配（`searching`），正在追的人不受影响：
+        追击的目标是玩家本人，比扇形准得多。
+        """
+        self._slot_cd -= dt
+        # 固定岗不参与分工：他本来就不该离开那道门（理由见 Enemy.note_belief）。
+        # 放进扇形里会出一个很荒唐的分配 —— "这格归你"发给一个必须站着不动的人，
+        # 于是 `_plan_is_stale` 每帧成立、计划每帧重排，而他一步也没走。
+        searchers = [e for e in self.enemies
+                     if e.alive and e.searching and not e.is_fixed_post]
+        # 看得见人的不需要"猜他去哪"：他们的目标是玩家本人。
+        # 不剔除的话会出一个很荒唐的循环 —— 他每帧看见人 → 清掉搜索位 →
+        # World 每帧又分给他一个 → 实测一局 56 秒刷出 1673 条"搜索位 →"。
+        for e in searchers:
+            if e.sees_player:
+                e.search_slot = None
+        searchers = [e for e in searchers if not e.sees_player]
+        if len(searchers) < 2:
+            # 只剩一个人在搜：没有分工可分，让他自己按记忆点搜
+            for e in searchers:
+                e.search_slot = None
+            return
+        if self.last_known is None or self.last_known_age > C.BELIEF_TTL:
+            return                      # 情报过期：各搜各的记忆点，比按旧地图铺开更靠谱
+
+        anchor = self.last_known
+        # 信念点挪了 3 格以上 = 情报换了地方，整个扇形重铺
+        moved = (self._slot_anchor is None
+                 or math.hypot(anchor[0] - self._slot_anchor[0],
+                               anchor[1] - self._slot_anchor[1]) > 3.0)
+        if moved:
+            if self._slot_cd > 0.0:
+                return                  # 刚铺过，1.5 秒内不反复重铺
+            for e in searchers:
+                e.search_slot = None
+            self._slot_anchor = anchor
+            self._slot_cd = C.BELIEF_FAN_REPLAN
+
+        # **只给还没有搜索位的人分。** 第一版每次重算都给所有人重分，
+        # 实测一局 56 秒出现 68 条"搜索位 →"，等于每 0.8 秒改一次派：
+        # 每次改派都让 `_plan_is_stale` 成立、搜查计划重排，结果谁都没搜完一处。
+        # 分工的意义是"这几格归你"，不是"每帧重新投票"。
+        waiting = sorted(
+            [e for e in searchers if e.search_slot is None],
+            key=lambda e: ((e.x - anchor[0]) ** 2 + (e.y - anchor[1]) ** 2, e.tag),
+        )
+        if not waiting:
+            return
+        slots = self._fan_slots(anchor, self.belief_heading, len(searchers))
+        taken = {tuple(e.search_slot) for e in searchers if e.search_slot is not None}
+        free = [s for s in slots if s not in taken]
+        if not free:
+            free = slots                # 都占了就允许重叠：总比站着不动强
+        for i, e in enumerate(waiting):
+            slot = free[i % len(free)]
+            self.trace.push("role", f"搜索位 → {slot}", who=e.tag, slot=slot)
+            e.search_slot = slot
+
+    def _fan_slots(self, anchor, heading, n: int) -> list:
+        """以信念点为心、沿行进方向铺 n 个搜索位。
+
+        第一个位是信念点本身，其余按 ±32°、±63°、±92°、±137° 依次展开 ——
+        先看两侧（人一拐弯就贴墙），再补正后方（他可能已经折返）。
+        落点要"就近吸附"到可走格：理想圆弧上多半是墙。
+        """
+        slots = [(int(anchor[0]), int(anchor[1]))]
+        if n <= 1:
+            return slots
+        ang0 = math.atan2(heading[1], heading[0])
+        R = C.BELIEF_FAN_RADIUS
+        for k in range(1, 10):
+            if len(slots) >= n:
+                break
+            for sign in (1, -1):
+                a = ang0 + sign * C.BELIEF_FAN_SPREAD * ((k + 1) // 2)
+                t = self._nearest_open(int(round(anchor[0] + math.cos(a) * R)),
+                                       int(round(anchor[1] + math.sin(a) * R)))
+                if t is not None and t not in slots:
+                    slots.append(t)
+                    break
+        if len(slots) < n:
+            # 圆弧全落在墙里（长条走廊很常见）：退回"藏身点"补齐
+            for t in find_hiding_spots(self.grid, anchor, limit=n * 2, radius=R + 2):
+                if t not in slots:
+                    slots.append(t)
+                if len(slots) >= n:
+                    break
+        return slots[:n]
+
+    def _nearest_open(self, x: int, y: int, r: int = 4):
+        """就近找一格能走的地方；附近没有就返回 None。"""
+        g = self.grid
+        if g.is_walkable(x, y):
+            return (x, y)
+        best = None
+        for dy in range(-r, r + 1):
+            for dx in range(-r, r + 1):
+                if not g.is_walkable(x + dx, y + dy):
+                    continue
+                d = dx * dx + dy * dy
+                if best is None or d < best[0]:
+                    best = (d, (x + dx, y + dy))
+        return best[1] if best else None
+
     def _maybe_broadcast(self) -> None:
         """目击者向 RADIO_RANGE 内的队友喊一声：附近哨兵会"过去看看"。
 
@@ -373,7 +505,13 @@ class World:
             for w in witnesses:
                 if (e.x - w.x) ** 2 + (e.y - w.y) ** 2 <= C.RADIO_RANGE ** 2:
                     e.suspicion = C.SUSPICION_CURIOUS + 0.05
-                    e._last_seen = (self.player.x, self.player.y)
+                    # 传"位置 + 方向"，不只是位置：位置让他知道去哪儿，
+                    # 方向让整个小队知道该往哪一侧铺开（见 belief_heading）。
+                    # 情报超过 BELIEF_TTL 就只传位置 —— 一个十秒前的方向
+                    # 比没有方向更坏，它会把扇形整片带偏。
+                    heading = (self.belief_heading
+                               if self.last_known_age <= C.BELIEF_TTL else None)
+                    e.note_belief((self.player.x, self.player.y), heading)
                     fired = True
                     break
         if fired:
