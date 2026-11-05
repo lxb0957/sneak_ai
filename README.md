@@ -842,7 +842,7 @@ python scripts/release_notes.py --tag v1.8.8 --print
 
 ## 测试与 benchmark
 
-全部测试都在无窗口模式下跑（`SDL_VIDEODRIVER=dummy`），不需要显卡、不需要人看着。CI（`.github/workflows/test-suite.yml`，由 `ci.yml` 调用）在 Python 3.11 和 3.13 上各跑一遍：25 个测试脚本 + UI 重叠审计 + 计分审计 + 拓扑/难度体检，任何一个返回非零就红。发布流水线（`release.yml`）调的是**同一个文件**——所以"发布跑通过了"和"开发跑通过了"说的是同一件事，不是两份恰好长得像的清单。
+全部测试都在无窗口模式下跑（`SDL_VIDEODRIVER=dummy`），不需要显卡、不需要人看着。CI（`.github/workflows/test-suite.yml`，由 `ci.yml` 调用）在 Python 3.11 和 3.13 上各跑一遍：26 个测试脚本 + UI 重叠审计 + 计分审计 + 拓扑/难度体检，任何一个返回非零就红。发布流水线（`release.yml`）调的是**同一个文件**——所以"发布跑通过了"和"开发跑通过了"说的是同一件事，不是两份恰好长得像的清单。
 
 > 文件名里的 `wNN` 是当时的开发周次（W3 / W6 / W7…），不是测试编号，所以编号不连续——中间缺的几周，测试被并进了相邻文件或随功能一起废弃了。排序按文件名，不按周次含义。
 
@@ -873,6 +873,7 @@ python scripts/test_w24.py              # 第 5 关固定岗：原地站得住 /
 python scripts/test_w25.py              # 主菜单选关：夹在 1~N / 跳关不写纪录 / 菜单零重叠
 python scripts/test_w26.py              # 决策流：只读（关掉记日志轨迹不变）/ 因果顺序 / 面板不挡 HUD
 python scripts/test_w27.py              # 共享情报：报警带方向 / 转述不压亲眼所见 / 扇形分工且不每帧改派
+python scripts/test_w28.py              # 控制台编码：cp1252 下自检不许被自己的中文日志搞崩
 python scripts/audit_ui.py              # UI 体检：五关 × 四档窗口，记录真实落点并两两求交
 python scripts/score_table.py           # 计分体检：四种玩法各跑一局，逐局和设计公式对账
 python scripts/test_robustness.py       # 健壮性：崩溃留痕 / 存档容错 / 启动降级

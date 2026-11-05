@@ -934,8 +934,49 @@ def _selfcheck(frames: int = 120) -> int:
             pass
 
 
+def _harden_console() -> None:
+    """让"写一句中文日志"永远不可能把程序弄崩。
+
+    打包后的 exe 在**英文 Windows** 上，stdout 的编码是 cp1252，
+    而自检的第一行就是中文 —— 写出去直接 UnicodeEncodeError，
+    退出码变 1。于是"自检不通过"其实是"日志写不出去"，
+    而且它发生在 print 里面，连 crash.log 都记不到
+    （crash.log 兜的是未捕获异常，这条被 selfcheck 的流程吞成了退出码）。
+
+    这个坑在 BLOG 第 23 章记过一次：emoji 在 cp936 的 cmd 里炸，
+    当时只改了台词（把 ✅ 换成 [OK]），没改机制 ——
+    所以它换了个方向又回来了：这次是中文撞上 cp1252。
+    **只改台词的问题，一定会以另一种形式复发。**
+
+    这次的规则：
+
+    - 输出接管道 / 被重定向（CI、`> log.txt`）：改成 UTF-8。
+      内容不丢，日志文件拿到的是标准编码。
+    - 输出在终端里：保留系统编码（中文 Windows 上 cp936 显示中文才是对的），
+      只把 errors 放宽成 replace —— 宁可少一个字符，不可崩一次。
+
+    为什么不是干脆全用 ASCII：这个项目的所有诊断信息都是中文写的，
+    为了迁就某个平台的默认代码页把它们翻译一遍，等于让可读性去补贴
+    一个本该由代码解决的问题。编码是运行时的事，就在运行时解决。
+    """
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        if stream is None or not hasattr(stream, "reconfigure"):
+            continue
+        try:
+            if stream.isatty():
+                stream.reconfigure(errors="replace")
+            else:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            # 重配失败也不能影响主流程：最坏情况是回到原编码，
+            # 而 errors="replace" 已经在能用的路径上兜住了。
+            pass
+
+
 def main() -> int:
     """入口：正常退出返回 0，崩溃返回 1 并留下 crash.log。"""
+    _harden_console()
     # 自检要放在最前面：它故意跳过菜单和存档，也不该被数据目录重定向影响
     if "--selfcheck" in sys.argv:
         return _selfcheck()
