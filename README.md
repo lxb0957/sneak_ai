@@ -806,6 +806,35 @@ dist/潜行协议.exe --selfcheck        # 打完之后先自检，别靠人盯�
 
 `--selfcheck` 就是为这类"打包后才发作"的问题加的：跳过菜单直接开一局，**五关各跑 120 帧**真实 `world.update` + 整帧 `_render`，断言"玩家真的动了、敌人真的动了、相机推得到地图东沿、Tab 全图放得进窗口"，退出码即结论。**菜单能显示不代表游戏能玩**，而"进了游戏才走到"的那条路径恰恰是打包最容易漏的；只跑第 1 关则连第 4 关那个"最右边 12 格永远看不到"的相机 bug 都验不出来。
 
+### 发布（打 tag 就够）
+
+```bash
+git tag -a v1.8.8 -m "..."     # 唯一的人工动作
+git push origin v1.8.8
+```
+
+`.github/workflows/release.yml` 接住 tag，串行跑三个 job：
+
+| job | 干什么 | 挂了会怎样 |
+|---|---|---|
+| `gate` | 跑与 CI **完全相同**的测试（同一个 `test-suite.yml`，不是抄一份清单） | 测试没过，后面两步都不启动 |
+| `build` | `windows-latest` 打包 → 用**产物本身**跑 `--selfcheck` → 算 sha256 | 打包崩 / 自检不过，不发布 |
+| `publish` | 建 Release、上传 exe、贴正文（自动附校验和） | — |
+
+三个地方值得单独说：
+
+1. **打包必须在 `windows-latest` 上做**。PyInstaller 不能交叉编译，Linux 上跑出来的不是 exe。这也是"为什么不能本地打包后手动上传"的根本原因——不是慢，是那条路要靠人记得每一步，而人记得住的步骤迟早会在某个赶时间的晚上漏掉。
+2. **测试清单只有一份**。`ci.yml` 和 `release.yml` 都 `uses: ./.github/workflows/test-suite.yml`。各写一份的话，加了 `test_w27` 只改一边，于是"发布前测试全绿"只对 push 成立、对 tag 不成立——**而且它不会报错**。
+3. **产物名由打包器一步到位**。`build_exe.py --name StealthProtocol-v1.8.8-win64`：默认名是中文的「潜行协议」，在 Windows runner 上"重命名中文文件再交给下一个 shell 步骤"要横跨 cp936 / cp65001 两套编码。中文名留给双击玩的人，ASCII 名给机器。
+
+正文从 `docs/releases/<tag>.md` 读（首行 `# 一句话` 会被抽成 Release 标题）；没有这个文件就退化成"上一个 tag 之后的 commit 列表"——能看，但回答不了"这一版是干嘛的"。本地预览：
+
+```bash
+python scripts/release_notes.py --tag v1.8.8 --print
+```
+
+**发完发现正文写错了**：改 `docs/releases/<tag>.md` → 推上去 → 在 Actions 里手动跑 `Release`（填那个 tag）。流水线是幂等的：已有 Release 走 `edit` + `upload --clobber`，不会撞 409。
+
 **闪退了怎么办**：游戏不会"一闪了事"——任何未捕获的异常都会立刻推进项目根目录的
 `crash.log`（时间戳 + Python/pygame 版本 + 完整调用栈），屏幕上也会把异常类型和
 日志路径显示 8 秒而不是直接黑屏。`run.bat` 则改成**无论正常退出还是崩溃都停住**，
@@ -813,7 +842,7 @@ dist/潜行协议.exe --selfcheck        # 打完之后先自检，别靠人盯�
 
 ## 测试与 benchmark
 
-全部测试都在无窗口模式下跑（`SDL_VIDEODRIVER=dummy`），不需要显卡、不需要人看着。CI（`.github/workflows/ci.yml`）在 Python 3.11 和 3.13 上各跑一遍：25 个测试脚本 + UI 重叠审计 + 计分审计 + 拓扑/难度体检，任何一个返回非零就红。
+全部测试都在无窗口模式下跑（`SDL_VIDEODRIVER=dummy`），不需要显卡、不需要人看着。CI（`.github/workflows/test-suite.yml`，由 `ci.yml` 调用）在 Python 3.11 和 3.13 上各跑一遍：25 个测试脚本 + UI 重叠审计 + 计分审计 + 拓扑/难度体检，任何一个返回非零就红。发布流水线（`release.yml`）调的是**同一个文件**——所以"发布跑通过了"和"开发跑通过了"说的是同一件事，不是两份恰好长得像的清单。
 
 > 文件名里的 `wNN` 是当时的开发周次（W3 / W6 / W7…），不是测试编号，所以编号不连续——中间缺的几周，测试被并进了相邻文件或随功能一起废弃了。排序按文件名，不按周次含义。
 
@@ -885,9 +914,10 @@ sneak_ai/
 │   ├── debug/         # 可视化调试层（F1：视野锥 + 决策时间线）
 │   └── __main__.py    # 游戏主循环
 ├── assets/            # 图表、演示 GIF、预览图
-├── scripts/           # 测试与 benchmark
+├── docs/releases/     # 每个 tag 的 Release 正文（<tag>.md，首行是标题）
+├── scripts/           # 测试与 benchmark（release_notes.py 负责生成发布正文）
 ├── launch.py          # 打包入口（PyInstaller 从这里起，不能用包内 __main__.py）
-├── build_exe.py       # 打 Windows 单文件 exe
+├── build_exe.py       # 打 Windows 单文件 exe（--name 给发布流水线用）
 └── run.bat            # Windows 一键启动
 ```
 
