@@ -163,34 +163,35 @@ jobs:
 
       # 幂等不是"顺手加的便利"，是**修复的入口**。
       #
-      # 这里不用 `gh release view` 判断"存在与否"，而是直接试创建、撞了再更新。
-      # 原因是踩出来的：上一次运行的 `gh release create` 建好了 draft、附件也传完了，
-      # 最后一步「把 draft 转成已发布」被 GitHub 回了一个 500。
-      # 于是仓库里留下一个 draft —— 而 `gh release view` 对 draft 的可见性
-      # 跟 tag 状态纠缠不清，"存在与否"这个判断本身就成了不确定的。
-      # **别问"它存在吗"，直接问"我能不能建；建不了说明已经有，那就更新"。**
-      # 这样无论上次停在哪一步（没建 / 建了 draft / 已发布），都能收敛到同一个终态。
-      - name: 建 / 更新 Release
+      # 这里分成两步，不是因为洁癖，是因为它们的失败模式完全不同：
+      # 改元数据是 API 语义问题，传附件是带宽问题，混在一起时，
+      # 一个失败你分不清是哪种。
+      #
+      # 为什么元数据不用 `gh release edit`（踩出来的）：
+      # 对 release 发**不带 `tag_name` 的 PATCH** 在这个仓库上稳定 500 ——
+      #   PATCH {name} / {body} / {name,body,draft}  -> 500
+      #   PATCH {..., tag_name}                      -> OK
+      # gh 用 release **id** 定位、payload 里不带 tag_name，于是必挂。
+      # 诱因是删过又重建 tag，release 内部那条 ref 关系脏了。
+      # `scripts/publish_release.py` 显式带上 tag_name，并自己做幂等：
+      # 查到就 PATCH、404 就 POST，两种情况都收敛到"存在且已发布"。
+      - name: 建 / 更新 Release 元数据
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
         run: |
-          set -euo pipefail
-          TITLE=$(cat rel/title.txt)
-          ERR=$(mktemp)
-          if gh release create "$TAG" dist/*.exe \
-               --title "$TITLE" --notes-file rel/notes_full.md --verify-tag 2>"$ERR"; then
-            echo "::notice::已新建 Release $TAG"
-          elif grep -qiE "already_exists|already exists|HTTP 422" "$ERR"; then
-            echo "::notice::$TAG 的 Release 已存在（可能是上次失败留下的 draft），改为更新"
-            # --draft=false 必须有：上次可能停在"draft 已建、还没发布"，
-            # 只 edit 正文的话，附件在、版本却永远不对外可见。
-            gh release edit "$TAG" --title "$TITLE" --notes-file rel/notes_full.md --draft=false
-            gh release upload "$TAG" dist/*.exe --clobber
-          else
-            echo "::error::创建 Release 失败（不是 already_exists，是真错误）"
-            cat "$ERR"
-            exit 1
-          fi
+          python scripts/publish_release.py \
+            --tag "$TAG" \
+            --title-file rel/title.txt \
+            --body-file rel/notes_full.md
+
+      - name: 上传附件
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$TAG" dist/*.exe --clobber
+
+      - name: 确认终态
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
           gh release view "$TAG" --json url,isDraft,assets \
             --template '{{.url}}  draft={{.isDraft}}{{"\n"}}{{range .assets}}{{.name}} {{.size}}B{{"\n"}}{{end}}'

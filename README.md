@@ -833,7 +833,9 @@ git push origin v1.8.8
 python scripts/release_notes.py --tag v1.8.8 --print
 ```
 
-**发完发现正文写错了**：改 `docs/releases/<tag>.md` → 推上去 → 在 Actions 里手动跑 `Release`（填那个 tag）。流水线是幂等的：已有 Release 走 `edit` + `upload --clobber`，不会撞 409。
+**发完发现正文写错了**：改 `docs/releases/<tag>.md` → 推上去 → 在 Actions 里手动跑 `Release`（填那个 tag）。流水线是幂等的：查到已存在就更新、不存在就新建，附件走 `upload --clobber`，重跑不会撞 409。
+
+> 元数据那一步用的是 `scripts/publish_release.py` 而不是 `gh release edit`，原因写在脚本开头：**对 release 发不带 `tag_name` 的 PATCH，在这个仓库上稳定 500**，而 `gh` 用 release id 定位、payload 里没有 `tag_name`——于是它每次都挂，报错只有一行 `HTTP 500`，没有 payload 可看。删过又重建 tag 会触发这个状态（release 内部那条 ref 关系脏了）。这个坑值得记：**封装替你做的那个决定，出事时最难查。**
 
 **闪退了怎么办**：游戏不会"一闪了事"——任何未捕获的异常都会立刻推进项目根目录的
 `crash.log`（时间戳 + Python/pygame 版本 + 完整调用栈），屏幕上也会把异常类型和
