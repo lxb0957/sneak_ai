@@ -106,7 +106,7 @@ def _create_window() -> pygame.Surface:
 
 
 class Game:
-    def __init__(self, start_level: int = 0):
+    def __init__(self, start_level: int = 0, trace_path: str = None):
         pygame.init()
         self.screen = _create_window()
         pygame.display.set_caption("潜行协议 Stealth Protocol")
@@ -132,6 +132,9 @@ class Game:
         self._power_tip_cd = 0.0        # 总闸提示的冷却（别每帧刷屏）
         self._show_intro = False        # 从菜单开局的第一条引导
         self.show_map = False           # Tab 全图：默认关，进关卡时重置
+        # `--trace out.jsonl`：把决策流落盘。None = 不写文件（面板照常能用）——
+        # 屏幕上的时间线只留最近 9 条，复盘"我是在第 2 关开始崩的"需要全量。
+        self._trace_path = trace_path
 
         # ---- 关卡推进 ----
         # start_level 由命令行 `--level N` 或主菜单的选关决定。
@@ -150,6 +153,19 @@ class Game:
         self.running = True
 
     # ============ 世界构建 ============
+    def _flush_trace(self) -> None:
+        """把当前世界的决策流追加到 --trace 指定的文件（没指定就什么都不做）。"""
+        if not self._trace_path:
+            return
+        w = getattr(self, "world", None)
+        if w is None:
+            return
+        try:
+            w.trace.dump(self._trace_path, level=w.level_index)
+        except OSError as exc:
+            # 写不进去不能挡住游戏：目录只读、磁盘满、路径写错都会走到这里。
+            print(f"[trace] 写不进 {self._trace_path}：{exc}", file=sys.stderr)
+
     def _new_world(self) -> None:
         """按当前关卡重建世界：地图、玩家、敌人、静态地图烘焙。
 
@@ -161,6 +177,9 @@ class Game:
         """
         lv = L.LEVELS[self.level_index]
         grid = lv.build()
+        # 上一关的决策流先追加落盘，再换世界。顺序反了的话，每换一关
+        # 前面积累的事件会随着旧 World 一起被丢掉，日志只剩最后一关。
+        self._flush_trace()
         self.world = World(grid)
         self.world.level_index = lv.idx
         self.world.level_name = lv.name
@@ -189,6 +208,10 @@ class Game:
                   alert_speed=lv.alert_speed, alert_view=lv.alert_view)
             for (x, y, pts) in enemy_cfg
         ]
+        # 决策流里的编号按出场顺序（1 起）。不用坐标或 id()：坐标会随移动变，
+        # id() 每次运行都不一样 —— 两种都会让"日志里的 #3"对不上屏幕上的 #3。
+        for i, e in enumerate(self.world.enemies):
+            e.tag = i + 1
         # 固定岗的朝向（第 5 关起）：关卡数据给的是"站住的姿势"，而 Enemy 默认
         # 朝东（+x）。按坐标匹配而不是按列表下标 —— 两边都用同一套格点坐标，
         # 中间不管怎么 snap / 排序都不会错位。
@@ -276,6 +299,7 @@ class Game:
                 self._render_menu()
                 continue
             self.step(dt)
+        self._flush_trace()
         pygame.quit()
 
     def step(self, dt: float) -> None:
@@ -925,12 +949,31 @@ def main() -> int:
         if not 0 <= start < len(L.LEVELS):
             print(f"--level 只能是 1~{len(L.LEVELS)}", file=sys.stderr)
             return 2
+    trace_path = None
+    if "--trace" in sys.argv:
+        try:
+            trace_path = sys.argv[sys.argv.index("--trace") + 1]
+        except IndexError:
+            print("用法：潜行协议.exe --trace out.jsonl   （把 AI 决策流写成 JSONL）",
+                  file=sys.stderr)
+            return 2
+    trace_path = None
+    if "--trace" in sys.argv:
+        try:
+            trace_path = sys.argv[sys.argv.index("--trace") + 1]
+        except IndexError:
+            print("用法：潜行协议.exe --trace out.jsonl   （把 AI 决策流写成 JSONL）",
+                  file=sys.stderr)
+            return 2
     anchored = _frozen_data_dir()
     if anchored is not None:
         settings.DATA_DIR = anchored
         records.DATA_DIR = anchored
     try:
-        Game(start_level=start).run()
+        game = Game(start_level=start, trace_path=trace_path)
+        if trace_path:
+            print(f"[trace] 决策流会追加写入：{trace_path}")
+        game.run()
     except KeyboardInterrupt:
         print("\n已手动中断。")
         return 0

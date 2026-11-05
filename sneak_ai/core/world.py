@@ -13,6 +13,7 @@ from typing import Dict, List
 
 from .. import constants as C
 from ..ai.coordination import Role
+from ..ai.trace import Trace, describe
 from ..entity.stone import Stone, plan_landing
 from ..perception.sound import SoundField
 from .grid import GridMap, WALL
@@ -99,6 +100,14 @@ class World:
     engaged: int = 0           # 已参与追击/包抄/封路的敌人数
     spotted: int = 0           # 本局被发现次数（每次"进入追击"计一次）
     events: List[str] = field(default_factory=list)  # 本帧事件（给音效用）
+    # 决策流：跨帧保留的"谁在什么时候改了什么主意"。和上面的 events 是
+    # 两个东西 —— events 每帧清空、只服务音效；trace 会一直留到关卡结束，
+    # 服务 F1 面板和 --trace 日志。混用一个列表的话，音效会把日志刷爆。
+    trace: object = field(default_factory=Trace)
+    # 本帧的 events 已经抄到第几条。抄两趟：敌人更新**之前**抄一次（石子落地、
+    # 枪声、补给这些"输入"），敌人更新之后再抄一次（被看见、被抓这些"输出"）。
+    # 只抄一趟的话，日志里"石子落地"会排在他"转调查"的后面 —— 因果看着像反的。
+    _events_mirrored: int = 0
     kills: int = 0             # 击倒次数（含重复击倒同一人）
     bodies_found: int = 0      # 尸体被目击的次数（直接影响"开枪划不划算"）
 
@@ -198,10 +207,12 @@ class World:
             return
 
         self.elapsed += dt
+        self.trace.tick(dt)
         self._alarm_cd = max(0.0, self._alarm_cd - dt)
         self._update_alert(dt)
         self._update_blackout(dt)
         self.events.clear()  # 每帧清空，主循环消费后即丢弃
+        self._events_mirrored = 0
 
         if self.player is not None:
             self.player.update(dt, self)
@@ -243,6 +254,10 @@ class World:
             else:
                 self.flow_field = None
 
+        # 先抄一遍本帧到目前为止的事件：这些是敌人这一帧的**输入**
+        # （石子落地、枪声、总闸）。排在敌人的反应前面，时间线才读得出因果。
+        self._mirror_events()
+
         for e in self.enemies:
             e.vis_scale = self.visibility_scale   # 黑灯系数，渲染与判定共用
             e.update(dt, self)
@@ -269,6 +284,20 @@ class World:
             self._check_capture()
 
         self._aggregate_threat()
+        self._mirror_events()
+
+    def _mirror_events(self) -> None:
+        """把本帧的 world.events 抄进决策流。
+
+        为什么在这里抄而不是在每处 append 的地方各写一行：`events` 本来就是
+        "这一帧发生了什么"的汇聚点（弹药、石子、尸体、警报都往里塞），
+        在出口处抄一次，就不必在十几个地方重复写日志调用 —— 少写一处，
+        时间线上就少一环因果。
+        """
+        while self._events_mirrored < len(self.events):
+            name = self.events[self._events_mirrored]
+            self._events_mirrored += 1
+            self.trace.push("world", describe(name), who=0, event=name)
 
     # ---- 协同 ----
     def _assign_roles(self) -> None:
@@ -310,7 +339,15 @@ class World:
             # 缓存里没有这个敌人（刚参与、还没轮到重算）就先保持原角色
             item = self.coordinator.assignments.get(id(e))
             if item is not None:
+                prev_role = e.role
                 e.role, e.target_tile = item
+                # 换角色要记：玩家看到的"三个人包了个圈"在日志里就是三条 role，
+                # 而"为什么是这三个人"只有编号和距离能回答。
+                if e.role != prev_role:
+                    self.trace.push(
+                        "role",
+                        f"{prev_role.value} → {e.role.value}：去 {e.target_tile}",
+                        who=e.tag, frm=prev_role.value, to=e.role.value)
 
     def _maybe_broadcast(self) -> None:
         """目击者向 RADIO_RANGE 内的队友喊一声：附近哨兵会"过去看看"。

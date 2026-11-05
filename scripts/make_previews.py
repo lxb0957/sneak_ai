@@ -87,13 +87,25 @@ def main():
     g._render(1 / 60)
     pygame.image.save(g.screen, str(ROOT / "assets" / "gameplay.png"))
 
-    # 同一时刻切到 F1 调试视角
+    # F1 那张单独找一帧，不跟上面共用：首图要的是"安静地在潜行"，
+    # 而调试视图要的是"面板上有因果链可看"。共用一帧的结果是二选一 ——
+    # 要么首图在"暴露！快找掩体"的状态下，要么调试面板上只有一行"捡到石子"，
+    # 看着像个没做完的功能。
+    def nice_debug(w, cam):
+        p = w.player
+        near = [e for e in w.enemies
+                if (e.x - p.x) ** 2 + (e.y - p.y) ** 2 < 11 ** 2]
+        return len(near) >= 2 and p.moving and len(w.trace.rows) >= 5
+
+    met_dbg = _drive(g, 60 * 40, lambda w: nice_debug(w, g.cam))
     g.debug.enabled = True
     g._render(1 / 60)
     pygame.image.save(g.screen, str(ROOT / "assets" / "ai_debug_view.png"))
 
     print(f"已生成 assets/gameplay.png 与 ai_debug_view.png"
-          f"（t={g.world.elapsed:.1f}s，条件{'命中' if met else '未命中'}，"
+          f"（t={g.world.elapsed:.1f}s，首图条件{'命中' if met else '未命中'} / "
+          f"调试条件{'命中' if met_dbg else '未命中'}，"
+          f"决策流 {len(g.world.trace.rows)} 条，"
           f"可见敌人 {g.world.seeing} 个，暴露度 {g.world.threat:.2f}）")
     pygame.quit()
 

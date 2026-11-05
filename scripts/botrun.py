@@ -628,7 +628,7 @@ def _leg_point(grid, ax, ay, bx, by, f):
 
 def run(aware=True, immune=False, budget=200.0, weight=7.0, verbose=False,
         flee_mode="goal", game=None, on_frame=None, armed=False, loot=False,
-        level=0, rng=None, start_delay=0.0, phase=None):
+        level=0, rng=None, start_delay=0.0, phase=None, trace_path=None):
     """loot=False 时机器人完全无视补给 —— 这是**测量基线**。
 
     为什么默认关：机器人是量化关卡难度的尺子，尺子本身不能随着被测物一起变。
@@ -953,6 +953,11 @@ def run(aware=True, immune=False, budget=200.0, weight=7.0, verbose=False,
             print(f"  t={t:5.1f} [{mode:4s}] {w.state:10s} ({p.x:.1f},{p.y:.1f}) "
                   f"threat={w.threat:.2f} seen={w.seeing} spotted={w.spotted}")
 
+    # 决策流落盘：只在这一局结束时写一次。传了路径才写 ——
+    # 测量 96 局时每次都写会产出 96 个文件，那不是复盘，那是垃圾。
+    if trace_path:
+        w.trace.dump(trace_path, level=level)
+
     return {
         "state": w.state,
         "time": round(w.elapsed, 1),
@@ -994,6 +999,9 @@ if __name__ == "__main__":
                          ">0 时 --runs 才是真采样；0 时是那条固定的确定性基线")
     ap.add_argument("--level", type=int, default=0,
                     help="关卡序号（0=哨站 1=环形枢纽），默认第 1 关")
+    ap.add_argument("--trace", default=None,
+                    help="把 AI 决策流写成 JSONL（只写 --runs 里的第一局，"
+                         "多局会追加到同一个文件、按关卡头分段）")
     ap.add_argument("--weight", type=float, default=7.0)
     ap.add_argument("--flee-mode", default="goal", choices=["goal", "cover"])
     ap.add_argument("-v", "--verbose", action="store_true")
@@ -1006,7 +1014,8 @@ if __name__ == "__main__":
         delay = rng.uniform(0.0, a.jitter) if rng else 0.0
         r = run(aware=not a.dumb, immune=a.immune, weight=a.weight, verbose=a.verbose,
                 flee_mode=a.flee_mode, armed=a.armed, loot=a.loot, level=a.level,
-                rng=rng, start_delay=delay)
+                rng=rng, start_delay=delay,
+                trace_path=a.trace if i == 0 else None)
         r["seed"] = a.seed + i
         results.append(r)
         print(r)

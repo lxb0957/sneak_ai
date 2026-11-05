@@ -85,6 +85,10 @@ class Enemy:
 
         # 调查状态
         self.state_name = "patrol"
+        # 决策流里的身份编号（1 起，由 World 建完敌人后统一编号）。
+        # 不用 id() 或坐标：前者每次运行都不同、没法对着日志复盘，
+        # 后者会随移动变化，同一个人在日志里会换好几个名字。
+        self.tag = 0
         self.searching = False      # 是否处于"主动搜索"流程（跨多帧，由 BT 的 RUNNING 语义表达）
         self._last_seen = None      # 最后看到玩家的位置（记忆）
         self._investigate_time = 0.0
@@ -180,6 +184,64 @@ class Enemy:
     def dwelling(self) -> bool:
         """是否正在巡逻点站岗环视（此时朝向左扫，视野锥会摆）。"""
         return self._dwell > 0.0
+
+    # ============ 决策流 ============
+    def _enter_state(self, world, name: str) -> None:
+        """切换行为名，并**只在真的改变时**记一条决策流。
+
+        为什么不能每帧都记："我现在在巡逻"这句话玩家看屏幕就知道，
+        真正需要解释的是"我从巡逻变成了调查，因为什么"。所以这里比较前后，
+        没变就直接返回（顺带省掉一次字符串格式化）。
+
+        注意记录发生在 `self.state_name` **改完之后**：trace 读到的永远是
+        新状态，它不参与任何判定，也就不会因为阅读顺序反过来影响行为。
+        """
+        if name == self.state_name:
+            return
+        prev = self.state_name
+        self.state_name = name
+        trace = getattr(world, "trace", None)
+        if trace is not None:
+            trace.push("state", self._state_note(prev, name), who=self.tag,
+                       frm=prev, to=name, susp=round(self.suspicion, 2))
+
+    def _state_note(self, prev: str, name: str) -> str:
+        """给人看的一句话。只在换状态时调用，所以可以放心地拼字符串。"""
+        if name == "investigate":
+            if self._last_seen is None:
+                where = "原地张望"
+            else:
+                # 整格而不是一位小数：面板一行只有 430 像素，小数点是纯占位，
+                # 而"他往哪走"在格级别上已经足够回答。
+                where = f"去查 ({int(self._last_seen[0])},{int(self._last_seen[1])})"
+            how = "看见过" if self._seen_this_episode else "听/被喊"
+            return f"{prev} → 调查：{where}（{how}，可疑 {self.suspicion:.0%}）"
+        if name == "chase":
+            by = "还看得见" if self.sees_player else "按最后已知位置"
+            return f"{prev} → 追击：{by}（可疑 {self.suspicion:.0%}）"
+        if name in ("flank", "block"):
+            return f"{prev} → {name}：去 {self.target_tile}"
+        return f"{prev} → {name}"
+
+    def _note_suspicion(self, world, prev: float) -> None:
+        """可疑度跨过阈值时记一条。
+
+        这是"他什么时候开始怀疑你"的唯一证据：状态机只在 0.35 / 0.75 两条线
+        上改变主意，玩家看到的"哨兵突然回头"其实早在那之前就开始了。
+        """
+        trace = getattr(world, "trace", None)
+        if trace is None:
+            return
+        now = self.suspicion
+        if prev < C.SUSPICION_CURIOUS <= now:
+            trace.push("suspicion", f"起疑 {now:.0%}：开始留意异常",
+                       who=self.tag, at=round(now, 2))
+        if prev < C.SUSPICION_CONFIRM <= now:
+            trace.push("suspicion", f"确认 {now:.0%}：他知道你在这",
+                       who=self.tag, at=round(now, 2))
+        if prev >= C.SUSPICION_CONFIRM > now:
+            trace.push("suspicion", f"跟丢 {now:.0%}：退回调查",
+                       who=self.tag, at=round(now, 2))
 
     # ============ 行为树 ============
     def _build_tree(self) -> Selector:
@@ -306,6 +368,9 @@ class Enemy:
     def _update_senses(self, dt, world, player) -> None:
         self.sees_player = False
         self.hears_player = False
+        # 这一帧的起点值：跨阈值要"从哪跨到哪"，只看新值判断不出是"刚起疑"
+        # 还是"已经起疑三秒了"。
+        prev_susp = self.suspicion
         self._noise_lock = max(0.0, self._noise_lock - dt)
         self.body_alert = max(0.0, self.body_alert - dt)
         # 刚重生的那一小段时间里闭眼：不是作弊，是给玩家"撤退"的机会
@@ -365,12 +430,14 @@ class Enemy:
             # 从"追"退到"查"是一个新的搜查行动：旧计划作废，进 investigate 时重排
             self._clear_search_plan()
 
+        self._note_suspicion(world, prev_susp)
+
     # ============ 行为 1：已分配角色（协同追击） ============
     def _act_engage(self, bb) -> Status:
         world = bb.get("world")
         dt = bb.get("dt")
         if self.role == Role.CHASE:
-            self.state_name = "chase"
+            self._enter_state(world, "chase")
             target = None
             if self.sees_player and world.player is not None:
                 target = (int(world.player.x), int(world.player.y))
@@ -388,7 +455,7 @@ class Enemy:
             return Status.SUCCESS
 
         # 包抄 / 封路：目标点分散在玩家周围与咽喉口，各自用 A* 过去
-        self.state_name = self.role.value
+        self._enter_state(world, self.role.value)
         if self.target_tile is None:
             return Status.SUCCESS
         self._follow_path(self.target_tile, self._chase_speed() * 0.95, dt, world)
@@ -398,7 +465,7 @@ class Enemy:
     def _act_investigate(self, bb) -> Status:
         world = bb.get("world")
         dt = bb.get("dt")
-        self.state_name = "investigate"
+        self._enter_state(world, "investigate")
         self.searching = True
 
         # 只要"正在查"，可疑度就保底在起疑阈值：
@@ -410,12 +477,12 @@ class Enemy:
             # 只有听觉线索、没有具体坐标：原地转头张望
             self._clear_search_plan()
             if self._scan(dt):
-                self._give_up()
+                self._give_up(world)
             return Status.SUCCESS
 
         self._investigate_time += dt
         if self._investigate_time > C.INVESTIGATE_GIVEUP:
-            self._give_up()
+            self._give_up(world)
             return Status.SUCCESS
 
         # 路线：查哪几处、先查哪个，由 GOAP 规划器按总脚程排（ai/search_plan.py）。
@@ -425,10 +492,10 @@ class Enemy:
         if not self._search_steps:
             # 周围没有值得搜的点：退化成原地环视一圈
             if self._scan(dt):
-                self._give_up()
+                self._give_up(world)
             return Status.SUCCESS
         if self._search_i >= len(self._search_steps):
-            self._give_up()   # 该查的都查过了，没找到人
+            self._give_up(world)   # 该查的都查过了，没找到人
             return Status.SUCCESS
 
         kind, tile = self._search_steps[self._search_i]
@@ -528,8 +595,17 @@ class Enemy:
             self._scan_dir = 1.0
         return self._look_timer <= 0.0
 
-    def _give_up(self) -> None:
-        """搜查无果：清空记忆、把可疑度压到"起疑阈值"之下，回到巡逻。"""
+    def _give_up(self, world) -> None:
+        """搜查无果：清空记忆、把可疑度压到"起疑阈值"之下，回到巡逻。
+
+        这条也要记进决策流：玩家最需要知道的是"他什么时候放弃的" ——
+        那正是可以继续走的那一刻，而屏幕上只会看到视野锥转走了。
+        """
+        trace = getattr(world, "trace", None)
+        if trace is not None:
+            trace.push("giveup",
+                       f"搜了 {self._investigate_time:.1f} 秒没找到，回巡逻",
+                       who=self.tag, secs=round(self._investigate_time, 2))
         self.searching = False
         self._last_seen = None
         self._investigate_time = 0.0
@@ -545,7 +621,7 @@ class Enemy:
     def _act_patrol(self, bb) -> Status:
         world = bb.get("world")
         dt = bb.get("dt")
-        self.state_name = "patrol"
+        self._enter_state(world, "patrol")
         if not self.patrol:
             return Status.SUCCESS
 
