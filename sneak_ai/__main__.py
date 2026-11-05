@@ -134,11 +134,14 @@ class Game:
         self.show_map = False           # Tab 全图：默认关，进关卡时重置
 
         # ---- 关卡推进 ----
-        # start_level 只由命令行 `--level N` 决定（调试/给朋友演示第三关用）。
+        # start_level 由命令行 `--level N` 或主菜单的选关决定。
         # 正常开局是 0，从菜单重开也回 0 —— 但"重开一局"回到的是**起点**，
         # 所以 _restart_run 用的是 _start_level，不是硬编码的 0。
         self._start_level = max(0, min(start_level, len(L.LEVELS) - 1))
         self.level_index = self._start_level
+        # 菜单和 _start_level 是同一件事的两个面：`--level` 进来时菜单要
+        # 停在那一关（回菜单再开局不会莫名其妙跳回第 1 关）。
+        self.menu.sel = self._start_level
         self._carry: dict = {}       # 跨关延续的统计（见 _snapshot_carry）
         self._next_timer = 0.0       # 过关过场剩余时间（>0 表示正在过场）
         self._clear_veil = None      # 过场遮罩（惰性创建，别每帧分配全屏 Surface）
@@ -317,6 +320,7 @@ class Game:
         否则从菜单再开局会接着打第 2 关，而分数和时间对不上。
         """
         self.menu.best = records.load()
+        self.menu.sel = self._start_level    # 回到"这一局是从哪起步的"那一关
         self.menu.active = True
         self.hud._tip_left = 0.0
         self.level_index = 0
@@ -330,7 +334,13 @@ class Game:
         self._restart()
 
     def _on_menu_start(self) -> None:
-        """从菜单进入游戏：一局新的，并给开局引导。"""
+        """从菜单进入游戏：一局新的，并给开局引导。
+
+        选关只在**这一处**生效：把菜单的选择写回 `_start_level`，
+        后面（重开一局、结算判定"这局算不算成绩"）全都读它，
+        不另开一个"从菜单选的关卡"字段 —— 两个真值必然对不上。
+        """
+        self._start_level = self.menu.sel
         self._restart_run()
         self._tips_shown = set()
         self._power_tip_cd = 0.0

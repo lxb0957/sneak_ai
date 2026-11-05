@@ -12,6 +12,7 @@
 """
 
 import argparse
+import math
 import sys
 from pathlib import Path
 
@@ -135,16 +136,50 @@ def render(level: int, out_path: Path, width: int = 760,
         label = (f"数据舱 {'AB'[i]}" if len(lv.terminals) > 1 else "数据终端")
         marks.append((label, pt, (120, 240, 170)))
     marks.append(("撤离点", lv.exfil, (110, 180, 245)))
+
+    # ---- 固定岗：空心环 + 一条朝向短线 ----
+    # 第 5 关的整关立论就是"这个人在哪、朝哪"，所以岗必须画进图里：
+    # 1 格关闸在整图的缩放下只有几个像素宽，光看砖块根本看不出"门在中间开着"。
+    if lv.posts:
+        for (px, py, face) in lv.posts:
+            cx, cy = to_px(px + 0.5, py + 0.5)
+            pygame.draw.circle(img, (238, 108, 108), (int(cx), int(cy)), 5, 2)
+            pygame.draw.line(img, (238, 108, 108), (cx, cy),
+                             (cx + math.cos(face) * 11,
+                              cy + math.sin(face) * 11), 2)
+
+    # 标签可能撞车。第 5 关的数据终端和撤离点只隔 5 格，缩放到 1160 宽时
+    # 两个标签之间只剩十来个像素 —— 而且**撞的往往不是文字，是别人的圆点**
+    # （绿点正好压住"撤离点"的第一个字）。所以先摆全部圆点，再给每个标签
+    # 在"右 / 左 / 上 / 下"四个候选位里挑第一个不撞的。
+    dots = []
     for label, (wx, wy), color in marks:
         cx, cy = to_px(wx, wy)
         pygame.draw.circle(img, (8, 10, 14), (int(cx), int(cy)), 9)
         pygame.draw.circle(img, color, (int(cx), int(cy)), 6)
-        # 标签往画面中心方向推，避免被裁掉
-        lx = cx + 14 if cx < img.get_width() * 0.6 else cx - 14
+        dot = pygame.Rect(0, 0, 22, 22)
+        dot.center = (int(cx), int(cy))
+        dots.append((label, cx, cy, color, dot))
+    placed = [d[4] for d in dots]
+
+    for label, cx, cy, color, _dot in dots:
         text = font.render(label, True, color)
-        rect = text.get_rect()
-        rect.center = (int(lx + (rect.width // 2 if cx < img.get_width() * 0.6
-                                else -rect.width // 2)), int(cy))
+        w, h = text.get_size()
+        cands = [(cx + 15, cy - h / 2), (cx - 15 - w, cy - h / 2),
+                 (cx - w / 2, cy - 13 - h), (cx - w / 2, cy + 13)]
+        rect = None
+        for (lx, ly) in cands:
+            r = pygame.Rect(int(lx), int(ly), w, h)
+            if not img.get_rect().contains(r):
+                continue
+            if any(r.colliderect(o.inflate(8, 4)) for o in placed):
+                continue
+            rect = r
+            break
+        if rect is None:                       # 四个方向全满：退回"往中间推"
+            rect = pygame.Rect(int(cx - 15 - w), int(cy - h / 2), w, h)
+            rect.clamp_ip(img.get_rect())
+        placed.append(rect)
         # 文字阴影：地图是深色的，纯色字压在砖缝上会糊
         shadow = font.render(label, True, (0, 0, 0))
         img.blit(shadow, (rect.x + 1, rect.y + 1))
@@ -159,6 +194,8 @@ def render(level: int, out_path: Path, width: int = 760,
     x = 12
     labels = [("出生", (235, 235, 240)), ("弹药", PICKUP_COLORS["ammo"]),
               ("石子", PICKUP_COLORS["stone"]), ("护盾", PICKUP_COLORS["shield"])]
+    if lv.posts:
+        labels.append(("岗（站死不动）", (238, 108, 108)))
     if trace:
         labels.append((f"机器人路线 {res['time']}s · {res['score']} 分",
                        (255, 170, 60)))
@@ -181,8 +218,11 @@ if __name__ == "__main__":
     ap.add_argument("--out", default=None)
     ap.add_argument("--path", action="store_true",
                     help="叠一条机器人实跑路线（会先跑一局，约 20 秒）")
+    # 默认 760 是按 80x60 的图定的；第 5 关是 100x37 的长条，同样 760 宽
+    # 只剩 7.6 像素/格，1 格宽的关闸和岗都会糊成一片。
+    ap.add_argument("--width", type=int, default=760)
     a = ap.parse_args()
     out = Path(a.out) if a.out else (
         ROOT / "dist" / "maps" / f"level{a.level + 1}{'_path' if a.path else ''}.png")
-    p = render(a.level, out, 760, a.path)
+    p = render(a.level, out, a.width, a.path)
     print(f"已生成 {p}（{L.LEVELS[a.level].name}）")

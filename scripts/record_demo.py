@@ -38,7 +38,7 @@ GIF_COLORS = 48           # 调色板颜色数：像素风本来就色少，砍�
 MAX_SECONDS = 120.0
 
 
-def record(out_path=None, level=0, phase=0.0):
+def record(out_path=None, level=0, phase=0.0, clip=None, crop=None, every=None):
     pygame.init()
     g = Game()
     if level:
@@ -57,6 +57,12 @@ def record(out_path=None, level=0, phase=0.0):
     screens = []
     dt = 1.0 / FPS
     tick = {"n": 0}
+    # 时间窗：只留 t0..t0+dur 这几秒。第 5 关一局 90~110 秒，整局录下来
+    # GIF 会到十几 MB，而 README 只需要讲清"扔石头 → 他走开 → 你过去"这一个动作。
+    t0, t1 = ((clip[0], clip[0] + clip[1]) if clip else (0.0, 1e9))
+    # 抽帧间隔：默认 14 帧一张（约 4.3fps）。石子飞 0.4 秒就落地，
+    # 这个间隔会整整漏掉它 —— 要讲"扔石头"的动作就得把间隔压小。
+    every = every or RECORD_EVERY
 
     def capture(_t, game, _mode):
         """每帧回调：正常渲染，每 RECORD_EVERY 帧存一张。"""
@@ -64,7 +70,7 @@ def record(out_path=None, level=0, phase=0.0):
         game._handle_audio(dt)
         game._render(dt)
         tick["n"] += 1
-        if tick["n"] % RECORD_EVERY == 0:
+        if tick["n"] % every == 0 and t0 <= _t <= t1:
             screens.append(game.screen.copy())
 
     # 相位旋钮交给 botrun 摆位（和 audit_phases / --jitter 共用同一个落点函数）。
@@ -74,19 +80,27 @@ def record(out_path=None, level=0, phase=0.0):
                      phase=phase or None)
     w = g.world
 
-    # 结算页多定格一会儿，让观众看清评级和得分
-    for i in range(int(1.6 * FPS)):
+    # 结算页多定格一会儿，让观众看清评级和得分。
+    # 裁时间窗时不加——那几秒讲的是另一个动作。
+    for i in range(0 if clip else int(1.6 * FPS)):
         g._time_accum += dt
         g._render(dt)
-        if i % RECORD_EVERY == 0:
+        if i % every == 0:
             screens.append(g.screen.copy())
 
     from PIL import Image
 
     pil_frames = []
     for s in screens:
-        raw = pygame.image.tostring(s, "RGB")
-        img = Image.frombytes("RGB", s.get_size(), raw)
+        # 先裁再缩：1280x960 全画幅缩到 432 宽，一格只有 11 像素，
+        # 人和石子都糊成色块。镜头本来就跟着玩家，居中裁一块等于给动作特写。
+        src = s
+        if crop:
+            cw, ch = crop
+            sw, sh = s.get_size()
+            src = s.subsurface(pygame.Rect((sw - cw) // 2, (sh - ch) // 2, cw, ch))
+        raw = pygame.image.tostring(src, "RGB")
+        img = Image.frombytes("RGB", src.get_size(), raw)
         img = img.resize(GIF_SIZE, Image.LANCZOS)
         pil_frames.append(img.convert("P", palette=Image.ADAPTIVE, colors=GIF_COLORS))
 
@@ -111,5 +125,19 @@ if __name__ == "__main__":
     ap.add_argument("--out", default=None, help="输出路径（默认按关卡取名）")
     ap.add_argument("--phase", type=float, default=0.0,
                     help="哨兵初始相位 0.0~1.0（沿巡逻线段插值，换个数值换一条走位）")
+    ap.add_argument("--clip", default=None,
+                    help="只录一段时间窗：『起始秒,时长秒』，例如 --clip 3,9")
+    ap.add_argument("--crop", default=None,
+                    help="居中裁切后再缩：『宽,高』，例如 --crop 640,480")
+    ap.add_argument("--every", type=int, default=None,
+                    help="每 N 帧取一张（默认 14≈4.3fps；压小才能拍到石子的飞行）")
     a = ap.parse_args()
-    record(Path(a.out) if a.out else None, a.level, a.phase)
+    clip = None
+    if a.clip:
+        t0, dur = (float(x) for x in a.clip.split(","))
+        clip = (t0, dur)
+    crop = None
+    if a.crop:
+        cw, ch = (int(x) for x in a.crop.split(","))
+        crop = (cw, ch)
+    record(Path(a.out) if a.out else None, a.level, a.phase, clip, crop, a.every)
