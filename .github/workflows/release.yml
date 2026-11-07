@@ -125,9 +125,22 @@ jobs:
     timeout-minutes: 15
 
     steps:
+      # 注意这里**不**跟着 inputs.tag 走，用的是触发本次 workflow 的 ref。
+      #
+      # 这是踩出来的：publish 一开始 checkout 的是被发布的 tag，于是
+      # `python scripts/publish_release.py` 报 "No such file or directory" ——
+      # 那个脚本是修流水线时才写的，老 tag 里当然没有。
+      # 后果是"修了流水线的 bug 却永远用不上"，因为修好的脚本进不了那一版。
+      #
+      # 分工应该是：
+      #   gate / build  → checkout **tag**（被打包的是那个提交，必须一致）
+      #   publish       → checkout **触发 ref**（打包和发布用的工具，要最新的）
+      # **工具和被加工物必须解耦。** 混成一个 ref，工具就永远追不上 bug。
+      #
+      # 触发 ref 在两种场景下都对：tag push 时它就是那个 tag；
+      # 手动重发时它是 main —— 正好是用最新脚本去发老版本。
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0
 
       - uses: actions/download-artifact@v4
