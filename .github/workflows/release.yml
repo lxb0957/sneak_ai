@@ -163,6 +163,11 @@ jobs:
           set -euo pipefail
           {
             cat rel/notes.md
+            # notes.md 是 splitlines 重组后写的，末尾**不带**换行。
+            # 所以这里要两个 echo：一个给最后一行收尾，一个留出空行。
+            # 少一个的话 `## 校验` 会紧贴在上一段最后一句的下一行 ——
+            # CommonMark 里这样也能渲染成标题，但读源码的人会以为漏了空行。
+            echo
             echo
             echo '## 校验'
             echo
