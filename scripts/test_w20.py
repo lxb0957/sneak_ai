@@ -189,6 +189,26 @@ def test_measure_script_reports_intervals():
     print(f"[OK] Wilson 区间随样本收紧（n=10 → ±{(w10[1]-w10[0])/2:.0%}，"
           f"n=200 → ±{(w200[1]-w200[0])/2:.0%}）")
 
+    # 差值区间：67/96 vs 52/96 必须整段在零以上。
+    # 这条是给 README 里"第 3 关比第 2 关难"那句兜底的 —— 当时用的是
+    # "两个边际区间相减"（[-4%, +34%]，跨零），据此写成了"量不出来"。
+    # 换 Newcombe 之后区间是 [+1.9%, +28.6%]，结论相反。
+    d, lo, hi = m.difference_interval(67, 96, 52, 96)
+    assert abs(d - (67 - 52) / 96) < 1e-9, d
+    assert lo > 0.0, f"67/96 与 52/96 的差值区间应当整段为正，实际 [{lo:.3f},{hi:.3f}]"
+    assert lo < d < hi, (lo, d, hi)
+    # 反过来：65/96 vs 67/96 必须跨零（差 2 个点不该显著）
+    _, lo2, hi2 = m.difference_interval(65, 96, 67, 96)
+    assert lo2 < 0.0 < hi2, f"两点差异却算出 [{lo2:.3f},{hi2:.3f}]，区间过窄"
+    # McNemar 精确检验：11:20 是 p≈0.15，17:9 是 p≈0.17
+    assert abs(m.mcnemar_exact(11, 20) - 0.150) < 0.01, m.mcnemar_exact(11, 20)
+    assert abs(m.mcnemar_exact(17, 9) - 0.169) < 0.01, m.mcnemar_exact(17, 9)
+    # 一边倒必须显著，而且 0:0 不能炸
+    assert m.mcnemar_exact(0, 25) < 0.001
+    assert m.mcnemar_exact(0, 0) == 1.0
+    print(f"[OK] 差值区间不跨零（{d:+.1%} → [{lo:+.1%},{hi:+.1%}]），"
+          f"配对检验 11:20→p={m.mcnemar_exact(11, 20):.2f}")
+
 
 def test_no_guard_doors_a_mandatory_corridor():
     """必经之路上不许有"横切窄廊"的哨兵（会移动的门）。

@@ -998,14 +998,6 @@ def main() -> int:
             print("用法：潜行协议.exe --trace out.jsonl   （把 AI 决策流写成 JSONL）",
                   file=sys.stderr)
             return 2
-    trace_path = None
-    if "--trace" in sys.argv:
-        try:
-            trace_path = sys.argv[sys.argv.index("--trace") + 1]
-        except IndexError:
-            print("用法：潜行协议.exe --trace out.jsonl   （把 AI 决策流写成 JSONL）",
-                  file=sys.stderr)
-            return 2
     anchored = _frozen_data_dir()
     if anchored is not None:
         settings.DATA_DIR = anchored

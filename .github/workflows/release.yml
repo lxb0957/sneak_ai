@@ -60,10 +60,12 @@ jobs:
       size: ${{ steps.hash.outputs.size }}
 
     steps:
+      # build 只需要这一个提交；`fetch-depth: 0` 是**给 publish 用的**，
+      # 这里保持 0 只是为了两边取数一致（正文的 git log 区间要在完整历史上算）。
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag || github.ref }}
-          fetch-depth: 0     # publish 要用 git log 生成正文，需要完整历史
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:

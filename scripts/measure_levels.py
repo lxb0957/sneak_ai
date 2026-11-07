@@ -17,9 +17,23 @@
     python scripts/measure_levels.py --levels 0,1,2,3 --runs 96 --seed 31337
 
 经验值（这台机器）：单进程约 55 局/分钟；五关并行各 96 局约 9 分钟。
-判读：两个区间重叠 = 分不出高低，别下结论。
+
+## 判读：别看"两个区间叠不叠"，看差值自己的区间
+
+这个脚本以前会打一行 `区间 [lo1-hi2, hi1-lo2]`，并且在文档里写
+"两个区间重叠 = 分不出高低"。**那是错的**，而且错得很常见：
+
+- 两个 95% 边际区间各取最坏情况拼出来的那个区间，实际只覆盖 ~90%，
+  拿它当 95% 用，本来就偏保守；
+- 更关键的是**方向反了**：区间重叠推不出"差异不显著"。两个边际区间
+  重叠 4 个百分点，差值区间完全可能整段在零以上。
+
+正确做法是直接对**差值**做区间（Newcombe 混合得分法）并给出检验 p 值。
+本脚本现在两者都打；关卡是按 seed 配对的，所以同时给 McNemar 精确检验
+（只看"翻盘局"），它比独立样本的检验更有力。
 """
 import argparse
+import math
 import random
 import sys
 from pathlib import Path
@@ -55,6 +69,38 @@ def wilson(k, n, z=1.96):
     return max(0.0, (c - m) / d), min(1.0, (c + m) / d)
 
 
+def difference_interval(k1, n1, k2, n2, z=1.96):
+    """两个比例之差的 Newcombe 区间（不配对时用）。
+
+    公式：d ± sqrt((p1-lo1)² + (hi2-p2)²) / sqrt((hi1-p1)² + (p2-lo2)²)
+    —— 把两侧边际区间的"半个宽度"按平方和合起来。
+
+    为什么不直接 `[lo1-hi2, hi1-lo2]`：那个区间是两个 95% 各取最坏情况
+    拼出来的，实际只有约 90% 覆盖；而且它宽得离谱，会让 16 个点的真实
+    差异看起来"跨零"。Newcombe 是被验证过在 95% 上表现良好的近似。
+    """
+    p1, p2 = k1 / n1, k2 / n2
+    lo1, hi1 = wilson(k1, n1, z)
+    lo2, hi2 = wilson(k2, n2, z)
+    d = p1 - p2
+    low = d - math.sqrt((p1 - lo1) ** 2 + (hi2 - p2) ** 2)
+    high = d + math.sqrt((hi1 - p1) ** 2 + (p2 - lo2) ** 2)
+    return d, low, high
+
+
+def mcnemar_exact(b, c):
+    """配对样本的精确 McNemar：只看"只有一边赢"的局（b、c）。
+
+    b = 只有 A 赢；c = 只有 B 赢。零假设下 b ~ Bin(b+c, 0.5)。
+    """
+    n = b + c
+    if n == 0:
+        return 1.0
+    k = min(b, c)
+    tail = sum(math.comb(n, i) for i in range(k + 1)) / (2 ** n)
+    return min(1.0, 2 * tail)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--levels", default="1,2")
@@ -74,6 +120,7 @@ def main():
     rows = {}
     for li in levels:
         wins, times = 0, []
+        flags = []          # 逐局的胜负，配对检验要按 i 对齐
         # 战死和超时必须分开记。混在一起会骗人：第 5 关第一版 96 局里
         # 38 局"败局"其实是**卡在第二道闸前站满 200 秒**（一次没死），
         # 而工具把它们当死点打出来，指向的是一格根本没杀过人的空地。
@@ -89,6 +136,7 @@ def main():
             loot = (LEVELS[li].resource_critical if a.loot == "auto"
                     else a.loot == "on")
             r = botrun.run(level=li, rng=rng, start_delay=delay, loot=loot)
+            flags.append(r["state"] == C.STATE_VICTORY)
             if r["state"] == C.STATE_VICTORY:
                 wins += 1
                 times.append(r["time"])
@@ -100,7 +148,7 @@ def main():
                 stalls[key] = stalls.get(key, 0) + 1
         lo, hi = wilson(wins, a.runs)
         avg_t = sum(times) / len(times) if times else 0.0
-        rows[li] = (wins, lo, hi)
+        rows[li] = (wins, lo, hi, flags)
         losses = a.runs - wins
         n_dead = sum(deaths.values())
         hot = sorted(deaths.items(), key=lambda kv: -kv[1])[:3]
@@ -129,9 +177,21 @@ def main():
     if len(levels) >= 2:
         for i in range(len(levels) - 1):
             a1, a2 = levels[i], levels[i + 1]
-            d = (rows[a1][0] - rows[a2][0]) / a.runs
+            n1, n2 = rows[a1][0], rows[a2][0]
+            d, lo, hi = difference_interval(n1, a.runs, n2, a.runs)
+            # 配对：第 i 局在两关用的是同一颗种子，所以能逐局比"翻盘"
+            f1, f2 = rows[a1][3], rows[a2][3]
+            only1 = sum(1 for x, y in zip(f1, f2) if x and not y)
+            only2 = sum(1 for x, y in zip(f1, f2) if y and not x)
+            p = mcnemar_exact(only1, only2)
+            verdict = "显著" if p < 0.05 else "不显著"
             print(f"Δ L{a1 + 1}→L{a2 + 1} = {d:+.1%}  "
-                  f"（区间 [{rows[a1][1] - rows[a2][2]:+.0%}, {rows[a1][2] - rows[a2][1]:+.0%}]）")
+                  f"（差值 95%CI [{lo:+.0%}, {hi:+.0%}]，"
+                  f"配对翻盘 {only1}:{only2}，McNemar p={p:.3f} → {verdict}）")
+            # 提醒一句老坑：边际区间重叠不代表差值为零
+            if lo <= 0.0 <= hi:
+                print("  注意：差值区间跨零 —— 这才叫「分不出高低」；"
+                      "两个边际区间重叠本身不构成这个结论。")
 
 
 if __name__ == "__main__":

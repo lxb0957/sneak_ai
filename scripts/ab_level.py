@@ -8,7 +8,7 @@
 区间重叠，于是只能说"分不出来"。但这两批数据其实**不是独立的** ——
 第 i 局在两次里用的是同一颗种子、同一份相位打散。同一个局面跑两遍，
 一遍带新逻辑一遍不带，得到的是**配对样本**，判读力比两组独立采样高得多：
-只要 12 局里翻了几局、翻向哪边，方向就是清楚的。
+只要翻盘的局数够多、方向够一边倒，结论就比"两个区间叠不叠"清楚。
 
 这就是本脚本干的事：同一批种子各跑一遍，逐局比较，再对"只有一边赢"的
 局数做 McNemar 精确检验（翻盘 8:4 和 8:8 意思完全不同）。
@@ -17,6 +17,7 @@
     python scripts/ab_level.py --level 0 --runs 96 --seed 31337
     python scripts/ab_level.py --level 0 --runs 96 --off belief   # 只关转述
     python scripts/ab_level.py --level 0 --runs 96 --off fan      # 只关分工
+    python scripts/ab_level.py --level 4 --runs 64 --off post     # 关掉"固定岗例外"
 
 输出的"翻盘 a:b"是 McNemar 的 b/c：
     a = 关掉新逻辑才赢的局（新逻辑让它输了）
@@ -113,7 +114,7 @@ def main():
     ap.add_argument("--seed", type=int, default=31337)
     ap.add_argument("--jitter", type=float, default=1.0)
     ap.add_argument("--off", default="both",
-                    help="要关掉的逻辑：belief / fan / both（默认）")
+                    help="要关掉的逻辑：belief / fan / post / both（默认）")
     a = ap.parse_args()
 
     lv = LEVELS[a.level]
