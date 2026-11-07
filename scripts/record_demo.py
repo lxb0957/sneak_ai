@@ -11,6 +11,11 @@ GO / FLEE / HIDE 状态机。所以 README 里那句"这段 GIF 不是摆拍"
 用法：
     python scripts/record_demo.py              # 第 1 关 -> assets/demo.gif
     python scripts/record_demo.py --level 1    # 第 2 关 -> assets/demo_lv2.gif
+    python scripts/record_demo.py --level 4    # 第 5 关 -> assets/demo_lv5.gif
+
+关卡全五关都支持（0~4），文件名按 `demo_lv{level+1}` 推，第 1 关就是 demo.gif。
+`--phase` 只影响哨兵开局站位：同一关换个相位就是一个新局面，某条路线在这里能过、
+在那里未必 —— README 里第 2 关那段 0.25 会输、0.2 能过，就是这么扫出来的。
 
 为什么按关分开录、而不是录成一整局：两关合起来 120 秒，GIF 会翻倍到 15MB 上下，
 README 打开就卡。分成两条反而更好读 —— 读者点进哪一节就看哪一关的实跑。
@@ -121,7 +126,8 @@ def record(out_path=None, level=0, phase=0.0, clip=None, crop=None, every=None):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--level", type=int, default=0, help="0=哨站 1=环形枢纽")
+    ap.add_argument("--level", type=int, default=0,
+                    help="0=哨站 1=环形枢纽 2=柱林中庭 3=配电所 4=查验站")
     ap.add_argument("--out", default=None, help="输出路径（默认按关卡取名）")
     ap.add_argument("--phase", type=float, default=0.0,
                     help="哨兵初始相位 0.0~1.0（沿巡逻线段插值，换个数值换一条走位）")
