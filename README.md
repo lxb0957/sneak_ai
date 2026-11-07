@@ -821,11 +821,12 @@ git push origin v1.8.8
 | `build` | `windows-latest` 打包 → 用**产物本身**跑 `--selfcheck` → 算 sha256 | 打包崩 / 自检不过，不发布 |
 | `publish` | 建 Release、上传 exe、贴正文（自动附校验和） | — |
 
-三个地方值得单独说：
+四个地方值得单独说：
 
 1. **打包必须在 `windows-latest` 上做**。PyInstaller 不能交叉编译，Linux 上跑出来的不是 exe。这也是"为什么不能本地打包后手动上传"的根本原因——不是慢，是那条路要靠人记得每一步，而人记得住的步骤迟早会在某个赶时间的晚上漏掉。
 2. **测试清单只有一份**。`ci.yml` 和 `release.yml` 都 `uses: ./.github/workflows/test-suite.yml`。各写一份的话，加了 `test_w27` 只改一边，于是"发布前测试全绿"只对 push 成立、对 tag 不成立——**而且它不会报错**。
 3. **产物名由打包器一步到位**。`build_exe.py --name StealthProtocol-v1.8.8-win64`：默认名是中文的「潜行协议」，在 Windows runner 上"重命名中文文件再交给下一个 shell 步骤"要横跨 cp936 / cp65001 两套编码。中文名留给双击玩的人，ASCII 名给机器。
+4. **`publish` 不 checkout 被发布的 tag**。`gate` / `build` 必须 checkout tag（被打包的是那个提交，前后得是同一个），`publish` 反过来要 checkout **触发 ref**。混成一个 ref 的后果是"**修了流水线的 bug 却永远用不上**"——修 bug 的脚本写在 main 上，而流水线每次都从老 tag 里取工具，那个脚本在那一版里根本不存在。
 
 正文从 `docs/releases/<tag>.md` 读（首行 `# 一句话` 会被抽成 Release 标题）；没有这个文件就退化成"上一个 tag 之后的 commit 列表"——能看，但回答不了"这一版是干嘛的"。本地预览：
 
