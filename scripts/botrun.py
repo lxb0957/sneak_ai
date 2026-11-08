@@ -628,11 +628,20 @@ def _leg_point(grid, ax, ay, bx, by, f):
 
 def run(aware=True, immune=False, budget=200.0, weight=7.0, verbose=False,
         flee_mode="goal", game=None, on_frame=None, armed=False, loot=False,
-        level=0, rng=None, start_delay=0.0, phase=None, trace_path=None):
+        level=0, rng=None, start_delay=0.0, phase=None, trace_path=None,
+        look=6, hold=0.25):
     """loot=False 时机器人完全无视补给 —— 这是**测量基线**。
 
     为什么默认关：机器人是量化关卡难度的尺子，尺子本身不能随着被测物一起变。
     补给是给玩家的系统，要用它做对照实验时再显式 --loot 打开。
+
+    `look` / `hold` 是"提前多久开始让路"的两个旋钮（默认 6 格 / 0.25）：
+      · look  —— 往前看多少格算"前方被照着"。6 格 × 走路 4.4 格/秒 = 1.4 秒，
+                 还不到一次视锥横扫的时间；
+      · hold  —— 危险度超过多少就停下来等。
+    两个都给默认值、都可复现，是因为它们**改变的是尺子**：调了就要重测，
+    所以必须在命令行上看得见，不能藏在常量里默默变更历史数字。
+    扫这两个旋钮用 `scripts/ab_look.py`。
     """
     """跑一局。
 
@@ -780,7 +789,7 @@ def run(aware=True, immune=False, budget=200.0, weight=7.0, verbose=False,
             # 这两个量必须分开看：
             # · 只是"门口被照着"→ 站在原地等（站的地方是安全的，等它扫过去就行）
             # · "我自己正被照着"→ 必须退出视线（蹲在原地也是活靶子）
-            ahead = max((danger.get(tuple(c), 0.0) for c in path[pi:pi + 6]),
+            ahead = max((danger.get(tuple(c), 0.0) for c in path[pi:pi + look]),
                         default=0.0)
             danger_here = danger.get((int(p.x), int(p.y)), 0.0)
             goal_near = False
@@ -815,7 +824,7 @@ def run(aware=True, immune=False, budget=200.0, weight=7.0, verbose=False,
             if mode == "GO":
                 if watched and (chased or nearest < 5.0):
                     mode, mode_t, replan = "FLEE", 0.0, 0.0
-                elif ahead > 0.25 and not goal_near and push_t <= 0.0:
+                elif ahead > hold and not goal_near and push_t <= 0.0:
                     # 前方被照着：先决定是"等"还是"退"
                     if danger_here > 0.05:
                         mode, mode_t, replan = "FLEE", 0.0, 0.0
@@ -825,7 +834,7 @@ def run(aware=True, immune=False, budget=200.0, weight=7.0, verbose=False,
                 # 停在视线外，等门前的人转身 —— 这就是真人过门前的动作
                 if watched and nearest < 5.0:
                     mode, mode_t, replan = "FLEE", 0.0, 0.0
-                elif ahead <= 0.20:
+                elif ahead <= hold * 0.8:
                     mode, mode_t, replan = "GO", 0.0, 0.0
                 elif mode_t > 1.6 and p.stones > 0 and decoy_cd <= 0.0:
                     # 等了 1.6 秒门还不开：门口那个人不是"会走开的巡逻"，
@@ -1004,6 +1013,10 @@ if __name__ == "__main__":
                          "多局会追加到同一个文件、按关卡头分段）")
     ap.add_argument("--weight", type=float, default=7.0)
     ap.add_argument("--flee-mode", default="goal", choices=["goal", "cover"])
+    ap.add_argument("--look", type=int, default=6,
+                    help="往前看几格算「前方被照着」（默认 6；越大越早让路）")
+    ap.add_argument("--hold", type=float, default=0.25,
+                    help="危险度超过多少就停下等（默认 0.25）")
     ap.add_argument("-v", "--verbose", action="store_true")
     a = ap.parse_args()
 
@@ -1014,7 +1027,7 @@ if __name__ == "__main__":
         delay = rng.uniform(0.0, a.jitter) if rng else 0.0
         r = run(aware=not a.dumb, immune=a.immune, weight=a.weight, verbose=a.verbose,
                 flee_mode=a.flee_mode, armed=a.armed, loot=a.loot, level=a.level,
-                rng=rng, start_delay=delay,
+                rng=rng, start_delay=delay, look=a.look, hold=a.hold,
                 trace_path=a.trace if i == 0 else None)
         r["seed"] = a.seed + i
         results.append(r)
