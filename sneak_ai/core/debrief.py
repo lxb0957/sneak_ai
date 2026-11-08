@@ -24,6 +24,8 @@
 
 from __future__ import annotations
 
+from .. import constants as C
+
 # 值得在复盘里单列的世界事件。只挑"改变局势"的那些：扔石子、捡弹夹这类
 # 动作每局几十条，全列出来会把关键时刻淹掉。
 NOTABLE = {
@@ -82,7 +84,7 @@ def level_row(world, carry: dict, index: int, name: str,
 
 
 def key_events(rows, limit: int = 4) -> list:
-    """从决策流里挑出"值得回头看"的瞬间，返回 [(本关时间, 说法)]。
+    """从决策流里挑出"值得回头看"的瞬间，返回 [(本关时间, 说法, 事件名)]。
 
     三条规则，每条都对应一种会被玩家读错的情况：
     1. 只认白名单里的事件 —— 全量事件是给 `--trace` 的，屏幕上放不下；
@@ -118,18 +120,6 @@ def _thin(items: list, limit: int) -> list:
     return [items[round(i * step)] for i in range(limit)]
 
 
-def first_spot(rows) -> float | None:
-    """第一次被看见的时刻（本关时间）；一次没被看见返回 None。
-
-    这个数字比"被发现 3 次"更能说明问题：3 次全在最后 5 秒，和从第 10 秒
-    就被盯上，是两种完全不同的局。
-    """
-    for r in rows:
-        if (getattr(r, "data", None) or {}).get("event") == "spotted":
-            return float(getattr(r, "t", 0.0))
-    return None
-
-
 def summary(world, carry: dict, level_log: list, limit: int = 4) -> dict:
     """整页复盘的数据。`level_log` 是已经打完的关，当前关按需补上。
 
@@ -141,7 +131,7 @@ def summary(world, carry: dict, level_log: list, limit: int = 4) -> dict:
     if not rows or rows[-1].get("idx") != cur:
         rows.append(level_row(
             world, carry, cur, getattr(world, "level_name", "本关"),
-            completed=world.state == _victory_state()))
+            completed=world.state == C.STATE_VICTORY))
 
     totals = {k: sum(int(r.get(k, 0) or 0) for r in rows) for k, _ in COUNTERS}
     flat = []
@@ -155,10 +145,3 @@ def summary(world, carry: dict, level_log: list, limit: int = 4) -> dict:
         "events": [(t, label) for t, label, _ in events],
         "elapsed": sum(r.get("time", 0.0) for r in rows),
     }
-
-
-def _victory_state():
-    """延迟导入常量，避免 core 模块之间出现 import 环。"""
-    from .. import constants as C
-
-    return C.STATE_VICTORY
