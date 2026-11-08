@@ -127,6 +127,11 @@ class World:
     # 前者能刷分、后者不能。所以必须记 _emit_noise 真正惊动的人次。
     decoy_hits: int = 0        # 被石子真的引去调查的人次
     shield_kills: int = 0      # 靠护盾反杀的次数
+    # 投出去多少颗石子、开出去多少枪（含打空的）。复盘页要说"这一局你用了
+    # 什么工具、有没有用"，而 decoy_hits 只记"真的引来几个人"——往空地扔
+    # 三颗石子的人，在 decoy_hits 上是 0，读起来像"他什么也没做"。
+    stones_thrown: int = 0
+    shots_fired: int = 0
     peak_threat: float = 0.0   # 本局暴露度峰值（判"全身而退"）
     spots_by_enemy: Dict[str, int] = field(default_factory=dict)  # 每个哨兵的发现次数
 
@@ -739,6 +744,7 @@ class World:
         # 朝向跟着枪口走：开枪时人是朝着那个方向的
         self.player.facing = math.atan2(dy, dx)
         self.player.consume_ammo()
+        self.shots_fired += 1
 
         kind, hx, hy, hit_enemy = self._trace_shot(ox, oy, dx, dy, C.WEAPON_RANGE)
 
@@ -836,6 +842,7 @@ class World:
             self.player.facing = math.atan2(dy, dx)
 
         self.player.consume_stone()
+        self.stones_thrown += 1
         self.stones.append(Stone(self.player.x, self.player.y, *landing))
         self.events.append("stone_throw")
         return True

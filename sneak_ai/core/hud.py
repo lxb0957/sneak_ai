@@ -32,6 +32,13 @@ class HUD:
         self._tip_left: float = 0.0
         self._tip_life: float = 1.0
         self._tip_age: float = 0.0
+        # 复盘页的版式缓存：块的位置由"总高度反推"算出来，内容不变就不该
+        # 每帧重算一遍（还要新建六七个临时 Surface）。存的是 brief **对象
+        # 本身**，用 is 比较 —— 换了一局 brief 会被重建，缓存自然失效。
+        self._rv_src = None
+        self._rv_rect = None
+        self._rv_placed: list = []
+        self._review_canvas = None
 
     def show_tip(self, text: str, life: float = 4.0) -> None:
         """引导提示：一次只显示一条，新的直接顶掉旧的。"""
@@ -590,8 +597,8 @@ class HUD:
         # ---- 第三段：底部先钉死，中间的空白交给风格分去填 ----
         # 提示/新纪录/最佳纪录都在底部，位置固定；中间那块的高度是靠
         # 剩下的空白算出来的，放不下就整组缩字号 —— 而不是硬挤上去叠字。
-        hint_surf = self.tc.get("end_hint", "R 再来一局    ·    ESC 回主菜单", 20,
-                                (255, 255, 120))
+        hint_surf = self.tc.get("end_hint", "TAB 复盘    ·    R 再来一局    ·    ESC 回主菜单",
+                                20, (255, 255, 120))
         hint_y = C.WINDOW_H - 44
         if new_record and world.state == C.STATE_VICTORY:
             nr_y = hint_y - 52
@@ -692,3 +699,178 @@ class HUD:
             pen = self.tc.get(f"style_pen_{size}", "反复被发现  −40", size,
                               (235, 130, 120))
             screen.blit(pen, pen.get_rect(center=(cx, y)))
+
+    # ============ 复盘页（结算页按 TAB）============
+    def draw_review(self, screen, brief: dict, t: float) -> None:
+        """复盘页：逐关拆解 + 关键时刻。
+
+        为什么不和结算页共用一套偏移量：结算页的行数是固定的（用时/被发现/
+        击倒/得分），复盘页的行数随"打了几关""抓到几个瞬间"变，钉死偏移迟早
+        撞上第四条。所以这里**先量后画** —— 所有块渲染完、算出总高度，再从
+        垂直中心往上铺。窗口比设计尺寸小时整页等比缩（和结算页同一个策略），
+        缩到 0.8 倍仍然可读，而重排一版小尺寸版式的收益不匹配。
+        """
+        if self._overlay is None:
+            self._overlay = pygame.Surface((C.WINDOW_W, C.WINDOW_H), pygame.SRCALPHA)
+            self._overlay.fill((0, 0, 0, 185))
+        screen.blit(self._overlay, (0, 0))
+
+        W, H = END_DESIGN
+        if self._review_canvas is None or self._review_canvas.get_size() != END_DESIGN:
+            self._review_canvas = pygame.Surface(END_DESIGN, pygame.SRCALPHA)
+        canvas = self._review_canvas
+        canvas.fill((0, 0, 0, 0))
+
+        rect, placed = self._review_layout(brief)
+        draw_panel(canvas, rect, alpha=208)
+        for surf, pos in placed:
+            canvas.blit(surf, pos)
+
+        # 只在需要时缩放；不放大（像素风的字放大只会糊，且原生 1:1 最清楚）
+        k = min(C.WINDOW_W / W, C.WINDOW_H / H, 1.0)
+        if k >= 0.999 and (C.WINDOW_W, C.WINDOW_H) == END_DESIGN:
+            screen.blit(canvas, (0, 0))
+        else:
+            scaled = pygame.transform.smoothscale(canvas, (int(W * k), int(H * k)))
+            screen.blit(scaled, scaled.get_rect(
+                center=(C.WINDOW_W // 2, C.WINDOW_H // 2)))
+
+    def _review_layout(self, brief: dict):
+        """把所有块排好位置，返回 (面板矩形, [(surface, (x, y))])。
+
+        单独一个函数是为了**能测**：`test_w30` 直接检查"任意两块不重叠、
+        整页在设计尺寸内"，不用截图也不用眼看。版式错了是静默的 ——
+        文字叠字不会报错，只会让人读不懂。
+        """
+        if self._rv_src is brief and self._rv_placed:
+            return self._rv_rect, self._rv_placed
+
+        W, H = END_DESIGN
+        cx = W // 2
+        levels = brief.get("levels") or []
+        done = bool(levels) and bool(levels[-1].get("completed"))
+
+        blocks = []          # (surface, 上方留白)
+        blocks.append((self.tc.get("rv_title", "复 盘", 42, (226, 232, 240),
+                                   bold=True), 0))
+        sub = (f"{'通关' if done else '失败'} · 累计 "
+               f"{float(brief.get('elapsed', 0.0)):.1f} 秒 · {len(levels)} 关")
+        blocks.append((self.tc.get("rv_sub", sub, 17, C.COL_TEXT_DIM), 4))
+
+        blocks.append((self._review_label("rv_sec1", "逐关"), 20))
+        blocks.append((self._review_header(), 4))
+        for row in levels:
+            blocks.append((self._review_row(row), 3))
+
+        blocks.append((self._review_label("rv_sec2", "关键时刻"), 22))
+        events = brief.get("events") or []
+        if events:
+            for i, (when, label) in enumerate(events):
+                blocks.append((self._review_event(i, when, label), 3))
+        else:
+            blocks.append((self.tc.get("rv_noev",
+                                       "这一局没有触发任何值得记录的事件",
+                                       16, C.COL_TEXT_DIM), 6))
+
+        blocks.append((self.tc.get("rv_foot",
+                                   "TAB 返回结算    ·    R 再来一局    ·    ESC 回主菜单",
+                                   17, (255, 255, 120)), 24))
+
+        total = sum(s.get_height() + gap for s, gap in blocks)
+        y = max(16, (H - total) // 2)
+        placed = []
+        for surf, gap in blocks:
+            y += gap
+            placed.append((surf, (cx - surf.get_width() // 2, y)))
+            y += surf.get_height()
+
+        left = min(pos[0] for _, pos in placed)
+        right = max(pos[0] + s.get_width() for s, pos in placed)
+        top = min(pos[1] for _, pos in placed)
+        bottom = max(pos[1] + s.get_height() for s, pos in placed)
+        rect = pygame.Rect(left - 46, top - 32,
+                           (right - left) + 92, (bottom - top) + 62)
+        rect.clamp_ip(pygame.Rect(0, 0, W, H))
+
+        self._rv_src, self._rv_rect, self._rv_placed = brief, rect, placed
+        return rect, placed
+
+    def _review_header(self):
+        """表头。列位是钉死的 660 宽：关卡 0 / 用时右对齐到 316 / 本关发生 350。
+
+        "用时" 右对齐而不是左对齐，是因为这一列装的是数字 —— 数值列左对齐，
+        小数点对不齐，读起来要重新数位数；而右对齐之后 "66.3 秒" 和
+        "87.4 秒（未完成）" 的右边缘在一条线上，扫一眼就能比大小。
+        """
+        W = 660
+        surf = pygame.Surface((W, 20), pygame.SRCALPHA)
+        for x, text in ((0, "关卡"), (316, "用时"), (350, "本关发生")):
+            s = self.tc.get(f"rv_h{x}", text, 14, (120, 130, 145))
+            surf.blit(s, (x - s.get_width() if text == "用时" else x, 0))
+        return surf
+
+    def _review_label(self, key: str, text: str):
+        """分区标题：贴在表格左边缘，而不是整页居中。
+
+        居中看起来像"下一段的标题"，左对齐才像"这一段属于上面那张表"——
+        复盘页的两个分区都在讲同一件事（这一局发生过什么），
+        让它们和表格共用一条左边线，比各自居中更像一份东西。
+        """
+        surf = pygame.Surface((660, 22), pygame.SRCALPHA)
+        s = self.tc.get(key, text, 15, (255, 215, 140), bold=True)
+        surf.blit(s, (0, 0))
+        return surf
+
+    def _review_row(self, row: dict):
+        """一行逐关拆解：关卡名 / 本关用时 / 本关发生过什么。
+
+        用一块固定宽的透明面板拼列，而不是把三列各自居中 —— 居中的表，
+        每行左边缘都不一样，读起来像三段互不相干的文字。
+        """
+        W = 660
+        completed = bool(row.get("completed", True))
+        name = self.tc.get(f"rv_n{row.get('idx')}",
+                           str(row.get("name") or f"第 {int(row.get('idx', 0)) + 1} 关"),
+                           18, (226, 232, 240))
+        when = f"{float(row.get('time', 0.0)):.1f} 秒"
+        if not completed:
+            when += "（未完成）"
+        t = self.tc.get(f"rv_t{row.get('idx')}_{completed}",
+                        when, 18,
+                        (200, 210, 225) if completed else (255, 150, 130))
+        cnt = self.tc.get(f"rv_c{row.get('idx')}", self._review_counters(row),
+                          16, C.COL_TEXT_DIM)
+        h = max(name.get_height(), t.get_height(), cnt.get_height())
+        surf = pygame.Surface((W, h), pygame.SRCALPHA)
+        surf.blit(name, (0, (h - name.get_height()) // 2))
+        surf.blit(t, (316 - t.get_width(), (h - t.get_height()) // 2))
+        surf.blit(cnt, (350, (h - cnt.get_height()) // 2))
+        return surf
+
+    @staticmethod
+    def _review_counters(row: dict) -> str:
+        """本关的行为计数，只报非零项。
+
+        全零的关卡写"没被发现过，也没动手"而不是"被发现 0 · 击倒 0 · 石子 0
+        · 开枪 0"：后者看起来像一张没填完的表，而前者是一句结论 ——
+        一关无声无息地过去，本身就是这局最值得说的事。
+        """
+        parts = []
+        for key, label in (("spotted", "被发现"), ("kills", "击倒"),
+                           ("stones_thrown", "石子"), ("shots_fired", "开枪")):
+            n = int(row.get(key, 0) or 0)
+            if n:
+                parts.append(f"{label} {n}")
+        return "  ·  ".join(parts) if parts else "没被发现过，也没动手"
+
+    def _review_event(self, i: int, when: float, label: str):
+        """一条关键时刻：时间右对齐到 96px，说法左对齐到 110px。"""
+        W = 660
+        t = self.tc.get(f"rv_et{i}", f"{float(when):.1f}s", 18,
+                        (255, 215, 140), bold=True)
+        s = self.tc.get(f"rv_el{i}", str(label), 18, (226, 232, 240))
+        h = max(t.get_height(), s.get_height())
+        surf = pygame.Surface((W, h), pygame.SRCALPHA)
+        surf.blit(t, (96 - t.get_width(), (h - t.get_height()) // 2))
+        surf.blit(s, (110, (h - s.get_height()) // 2))
+        return surf

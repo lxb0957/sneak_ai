@@ -30,6 +30,7 @@ import pygame
 from . import constants as C
 from .ai.coordination import Coordinator
 from .audio.sfx import SFX
+from .core import debrief
 from .core import records
 from .core import levels as L
 from .core.camera import Camera
@@ -152,6 +153,13 @@ class Game:
         self._carry: dict = {}       # 跨关延续的统计（见 _snapshot_carry）
         self._next_timer = 0.0       # 过关过场剩余时间（>0 表示正在过场）
         self._clear_veil = None      # 过场遮罩（惰性创建，别每帧分配全屏 Surface）
+        # 复盘数据：每打完一关压一行，结算页按 TAB 摊开看。
+        # 存成"关卡完成时的快照"而不是结算时回头算 —— 换关会重建 World，
+        # 前几关的 trace 和计数会跟着旧对象一起丢掉（_new_world 里明确
+        # 只把 trace 落盘、不保留在内存里）。
+        self.level_log: list = []
+        self.show_review = False
+        self._debrief = None         # 当前关的复盘缓存（进入页面时算一次）
 
         self._new_world()
         self.running = True
@@ -181,6 +189,10 @@ class Game:
         """
         lv = L.LEVELS[self.level_index]
         grid = lv.build()
+        # 换关/重开都要收起复盘页：它读的是"这一关"的快照，留在屏幕上会
+        # 出现"标题写着第 3 关、数字来自第 2 关"这种自相矛盾的画面。
+        self.show_review = False
+        self._debrief = None
         # 上一关的决策流先追加落盘，再换世界。顺序反了的话，每换一关
         # 前面积累的事件会随着旧 World 一起被丢掉，日志只剩最后一关。
         self._flush_trace()
@@ -253,7 +265,7 @@ class Game:
     # 弹药/石子要带：它是玩家前一关省下来的资源，不带就等于每关重置，
     # "为下一关留两发子弹"这个决策会直接消失。
     _CARRY_COUNTERS = ("spotted", "kills", "bodies_found", "decoy_hits",
-                       "shield_kills")
+                       "shield_kills", "stones_thrown", "shots_fired")
 
     def _apply_carry(self) -> None:
         c = self._carry
@@ -360,6 +372,7 @@ class Game:
         """整局重来：回到起点关（默认第 1 关），跨关统计清零。"""
         self.level_index = self._start_level
         self._carry = {}
+        self.level_log = []          # 新的一局，前几关的复盘不能跟过来
         self._restart()
 
     def _on_menu_start(self) -> None:
@@ -442,6 +455,12 @@ class Game:
                 if self.world.state in (C.STATE_VICTORY, C.STATE_DEFEAT):
                     if self._next_timer > 0:
                         continue          # 过关过场中不接受输入
+                    # TAB：在"结算"和"复盘"之间翻面。两页共用同一块屏幕，
+                    # 因为复盘是结算的追问（"这分怎么来的"），不是另一个界面。
+                    if ev.key == pygame.K_TAB:
+                        self.show_review = not self.show_review
+                        self._debrief = None
+                        continue
                     if ev.key == pygame.K_r:
                         if self.world.state == C.STATE_DEFEAT:
                             self._retry_level()
@@ -590,6 +609,11 @@ class Game:
             return
         self._scored = True
         self.player.clear_keys()
+        # 每打完一关就压一行复盘快照 —— 必须在 _advance_level 之前，
+        # 换关会重建 World，这一关的 trace 和计数随之消失（见 _new_world）。
+        self.level_log.append(debrief.level_row(
+            self.world, self._carry, self.level_index,
+            getattr(self.world, "level_name", f"第 {self.level_index + 1} 关")))
         # 单关纪录：只认"从这一关起步"的那一关。
         #
         # 为什么不是每一关都记：`_carry` 会把前面的用时灌进新世界，
@@ -617,6 +641,17 @@ class Game:
             return
         self.new_record = records.submit(self.world.record())
         self.best = records.load()
+
+    def _debrief_data(self) -> dict:
+        """复盘页的数据，进页面时算一次就够。
+
+        每帧重算并不是"几行表"那么便宜：关键时刻要从 trace 的 4000 条
+        环形缓冲里筛，而复盘页会停留好几秒 —— 这段时间里数据一个字都不会变。
+        """
+        if self._debrief is None:
+            self._debrief = debrief.summary(
+                self.world, self._carry, self.level_log)
+        return self._debrief
 
     def _end_best(self) -> tuple:
         """结算页该拿哪条纪录来比，以及它叫什么。
@@ -673,10 +708,13 @@ class Game:
         if self._next_timer > 0:
             self._draw_level_clear(screen)
         elif self.world.state in (C.STATE_VICTORY, C.STATE_DEFEAT):
-            end_best, end_label = self._end_best()
-            self.hud.draw_end(screen, self.world, end_best,
-                              self.new_record or self.new_level_record,
-                              self._time_accum, end_label)
+            if self.show_review:
+                self.hud.draw_review(screen, self._debrief_data(), self._time_accum)
+            else:
+                end_best, end_label = self._end_best()
+                self.hud.draw_end(screen, self.world, end_best,
+                                  self.new_record or self.new_level_record,
+                                  self._time_accum, end_label)
         pygame.display.flip()
 
     def _draw_level_clear(self, screen) -> None:
