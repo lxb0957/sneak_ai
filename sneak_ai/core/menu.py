@@ -62,12 +62,19 @@ class Menu:
             sfx.play("pickup", cooldown=0.03, volume=0.28)
 
     def status_text(self) -> str:
-        """选关行右边那句小字：说清楚"这一关算不算成绩"。"""
+        """选关行右边那句小字：这一关通关没有、本关最佳多少。
+
+        跳关现在**会**记本关成绩（以前是整局都不记，练十遍没反馈），
+        但整局总榜仍然只认从第 1 关起步的那一条 —— 这两件事不一样，
+        所以这里只说"本关"，"不计总榜"那句放在底部，别把中间这行撑爆。
+        """
+        row = records.level_best(self.best, self.sel)
+        best = f"本关最佳 {row['score']} 分" if row else ""
         if self.sel == 0:
-            return "正式开局"
+            return f"正式开局 · {best}" if best else "正式开局"
         if self.sel < self.cleared:
-            return "已通关 · 这一局不计纪录"
-        return "未通关 · 可试玩，这一局不计纪录"
+            return f"已通关 · {best}" if best else "已通关"
+        return f"未通关 · {best}" if best else "未通关 · 可试玩"
 
     def handle_event(self, ev, sfx) -> None:
         if ev.type == pygame.KEYDOWN:
@@ -89,6 +96,17 @@ class Menu:
                     self.move(step, sfx)
                     return
             self.active = False
+
+    def foot_text(self, muted: bool) -> str:
+        """底部那行小字：音效开关、退出，以及跳关时的成绩范围说明。
+
+        单独抽出来是为了能被测试断言。菜单的文案规则和选关规则一样，
+        都属于"说错了玩家就误解"的东西，不该只活在 draw() 里的一个 f-string 中。
+        """
+        foot = f"M 音效：{'开' if not muted else '关'}    ESC 退出"
+        if self.sel > 0:
+            foot += "    · 跳关只记本关成绩，不进总榜"
+        return foot
 
     def draw(self, screen, muted: bool, t: float) -> None:
         W, H = screen.get_width(), screen.get_height()
@@ -151,8 +169,12 @@ class Menu:
         s1 = self.tc.get(("sel", self.sel), label, 19, _TEXT, bold=True)
         s2 = self.tc.get(("sel_st", self.sel, self.cleared),
                          self.status_text(), 15, _FAINT)
-        gap, arrow_w = 14, 16
-        total = arrow_w * 2 + s1.get_width() + gap * 2 + s2.get_width()
+        # pad 是箭头和文字之间的空隙。原来两者是贴着画的（箭头占 16px，
+        # 文字从 x+16 开始），文字短的时候看不出来，加了"本关最佳 XXX 分"
+        # 之后整行变长，贴在一起就显得挤。左右各留 8px，两边对称。
+        gap, arrow_w, pad = 14, 16, 8
+        total = (arrow_w * 2 + pad * 2
+                 + s1.get_width() + gap + s2.get_width())
         cy = H // 2 + 124
         x = (W - total) // 2
         self._arrows = []
@@ -165,7 +187,7 @@ class Menu:
                     (tip, cy), (back, cy - 8), (back, cy + 8)])
                 self._arrows.append(
                     (pygame.Rect(ax - 6, cy - 14, arrow_w + 12, 28), sign))
-        r1 = s1.get_rect(midleft=(x + arrow_w, cy))
+        r1 = s1.get_rect(midleft=(x + arrow_w + pad, cy))
         screen.blit(s1, r1)
         self.rects.append(("sel_label", r1))
         r2 = s2.get_rect(midleft=(r1.right + gap, cy))
@@ -180,5 +202,7 @@ class Menu:
         go.set_alpha(int(pulse))
         blit(go, (W // 2, H // 2 + 158), "go")
 
-        blit(self.tc.get("mute", f"M 音效：{'开' if not muted else '关'}    ESC 退出",
-                         15, _FAINT), (W // 2, H - 40), "mute")
+        # 跳关时补一句"只记本关"：中间那行已经写了"本关最佳 X 分"，
+        # 不说清楚范围的话，玩家会以为这条成绩进了总榜（实际不会）。
+        blit(self.tc.get("mute", self.foot_text(muted), 15, _FAINT),
+             (W // 2, H - 40), "mute")

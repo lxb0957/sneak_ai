@@ -483,16 +483,22 @@ class HUD:
             return "刚开局"
         return "潜入途中"
 
-    def draw_end(self, screen, world, best: dict, new_record: bool, t: float) -> None:
+    def draw_end(self, screen, world, best: dict, new_record: bool, t: float,
+                 best_label: str = "最佳纪录") -> None:
         """结算页是静态的（只有"新纪录"在闪），所以遮罩和文字全部走缓存，
-        不要在停留的这几秒里每帧重新渲染一遍。"""
+        不要在停留的这几秒里每帧重新渲染一遍。
+
+        `best_label` 由调用方决定拿哪条纪录：正式局是跨五关的"最佳纪录"，
+        跳关局是这一关的"本关最佳"。文案跟着数据走，而不是让结算页
+        自己猜"这个 dict 是哪一种"——它没有足够的信息去猜。
+        """
         if C.WINDOW_H < END_FALLBACK_H and (C.WINDOW_W, C.WINDOW_H) != END_DESIGN:
-            self._draw_end_scaled(screen, world, best, new_record, t)
+            self._draw_end_scaled(screen, world, best, new_record, t, best_label)
             return
-        self._draw_end_card(screen, world, best, new_record, t)
+        self._draw_end_card(screen, world, best, new_record, t, best_label)
 
     def _draw_end_scaled(self, screen, world, best: dict, new_record: bool,
-                         t: float) -> None:
+                         t: float, best_label: str = "最佳纪录") -> None:
         """矮窗口：按设计尺寸画到离屏画布，再等比缩进窗口。
 
         结算页是**纵向堆叠的固定像素版式**（标题在 cy-258、评级章在 cy-150、
@@ -506,7 +512,7 @@ class HUD:
         old = (C.WINDOW_W, C.WINDOW_H)
         C.WINDOW_W, C.WINDOW_H = W, H      # 卡片里的居中/贴底都读这两个常量
         try:
-            self._draw_end_card(canvas, world, best, new_record, t)
+            self._draw_end_card(canvas, world, best, new_record, t, best_label)
         finally:
             C.WINDOW_W, C.WINDOW_H = old
         k = min(C.WINDOW_W / W, C.WINDOW_H / H)
@@ -515,7 +521,7 @@ class HUD:
             center=(C.WINDOW_W // 2, C.WINDOW_H // 2)))
 
     def _draw_end_card(self, screen, world, best: dict, new_record: bool,
-                       t: float) -> None:
+                       t: float, best_label: str = "最佳纪录") -> None:
         if self._overlay is None:
             self._overlay = pygame.Surface((C.WINDOW_W, C.WINDOW_H), pygame.SRCALPHA)
             self._overlay.fill((0, 0, 0, 185))
@@ -595,7 +601,7 @@ class HUD:
             best_y = hint_y - 44
 
         if best:
-            line = (f"最佳纪录  {best.get('score', 0)} 分  ·  "
+            line = (f"{best_label}  {best.get('score', 0)} 分  ·  "
                     f"{best.get('time', 0)} 秒  ·  {best.get('rank', '-')} 评级")
             # 时间戳接在同一行末尾，不另起一行：底部这块是靠 nudge 往上挪才
             # 不压底栏的，多插一行会连带把上面整组元素的间距算错。
@@ -609,7 +615,7 @@ class HUD:
         else:
             # 不能用 "暂无最佳纪录"：这里要是把"暂无最佳纪录"当整行显示，
             # 外层再拼一次"最佳纪录"就成了"最佳纪录 暂无最佳纪录 · A 评级"。
-            b = self.tc.get("end_best", "最佳纪录  暂无", 18, C.COL_TEXT_DIM)
+            b = self.tc.get("end_best", f"{best_label}  暂无", 18, C.COL_TEXT_DIM)
         b_rect = b.get_rect(center=(cx, best_y))
 
         # 结算页浮在 HUD 之上，但 HUD 的底栏**没有**让位（体力/弹药/石子/护盾

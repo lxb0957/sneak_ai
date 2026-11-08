@@ -86,22 +86,36 @@ def test_selection_is_clamped():
 
 
 def test_locked_level_is_still_selectable_and_says_so():
-    """没通关的关卡也必须能进 —— 但界面要写明"这局不计纪录"。"""
+    """没通关的关卡也必须能进 —— 但要写清"这一局的成绩算到哪"。
+
+    改了口径：跳关**会**记本关最佳（以前整局都不记，练十遍没反馈），
+    但整局总榜仍然只认从第 1 关起步的那一条。所以文案从"不计纪录"
+    变成"本关最佳 + 底部说不进总榜"——两件事都得说，少一样就误导。
+    """
     n = len(L.LEVELS)
     m = Menu({"score": 900, "levels": 2}, sel=n - 1)   # 只通了前两关
     assert m.cleared == 2, f"已通关数读错：{m.cleared}"
     txt = m.status_text()
-    assert "不计纪录" in txt, f"未通关关卡没有说明不计纪录：{txt!r}"
     assert "未通关" in txt, f"没标出「未通关」：{txt!r}"
+    assert "本关最佳" not in txt, f"一次都没打过就显示最佳：{txt!r}"
+    assert "不进总榜" in m.foot_text(False), \
+        f"跳关没说清成绩只记本关：{m.foot_text(False)!r}"
 
     m.sel = 1                                           # 第 2 关，已通关
     assert "已通关" in m.status_text(), m.status_text()
-    assert "不计纪录" in m.status_text(), "已通关的关卡也不是正式开局，却没说不计纪录"
 
     m.sel = 0                                           # 第 1 关 = 正式开局
     assert "正式开局" in m.status_text(), m.status_text()
-    print("[OK] 选关不设路障；文案分三种：正式开局 / 已通关 / 未通关，"
-          "且跳关都标了不计纪录")
+    assert "不进总榜" not in m.foot_text(False), \
+        f"正式开局不该挂跳关规则：{m.foot_text(False)!r}"
+
+    # 有单关成绩时，选关行要把它报出来 —— 这正是"练一关也有反馈"的全部意义
+    m2 = Menu({"score": 900, "levels": 2,
+               "per_level": {"3": {"score": 512, "time": 60.0, "rank": "B"}}},
+              sel=3)
+    assert "本关最佳 512 分" in m2.status_text(), m2.status_text()
+    print("[OK] 选关不设路障；文案分三种：正式开局 / 已通关 / 未通关；"
+          "有单关成绩就报出来，底部标清「不进总榜」")
 
 
 def test_menu_choice_becomes_start_level():

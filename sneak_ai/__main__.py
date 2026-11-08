@@ -127,6 +127,10 @@ class Game:
         self._step_acc = 0.0    # 脚步音效的移动距离累积
         self._scored = False    # 本局是否已提交成绩
         self.new_record = False
+        # 本关有没有刷新单关最佳。和 new_record 分开：整局纪录只在打完最后一关时
+        # 才可能刷新，而单关纪录在"起步关打完"那一刻就结算了 ——
+        # 两个时刻不同，用一个标志会让过场卡片显示"新纪录"却什么都没记。
+        self.new_level_record = False
         self._prev_stamina = C.STAMINA_MAX
         self._tips_shown: set = set()   # 本会话已提示过的资源类型
         self._power_tip_cd = 0.0        # 总闸提示的冷却（别每帧刷屏）
@@ -285,6 +289,7 @@ class Game:
         self.level_index += 1
         self._new_world()
         self._scored = False
+        self.new_level_record = False
         self._step_acc = 0.0
         self._prev_stamina = C.STAMINA_MAX
         self._tips_shown = set()
@@ -509,6 +514,7 @@ class Game:
         self._step_acc = 0.0
         self._scored = False
         self.new_record = False
+        self.new_level_record = False
         self._prev_stamina = C.STAMINA_MAX
         self._next_timer = 0.0
 
@@ -584,18 +590,44 @@ class Game:
             return
         self._scored = True
         self.player.clear_keys()
+        # 单关纪录：只认"从这一关起步"的那一关。
+        #
+        # 为什么不是每一关都记：`_carry` 会把前面的用时灌进新世界，
+        # 从第 1 关连打到第 3 关时，第 3 关的 elapsed 里含着一二关的时间，
+        # 拿去和"直接挑战第 3 关"的成绩比，练习分永远低于正式分 ——
+        # 那不是玩家退步，是两个项目不同。起步关没有 carry，是干净的一关。
+        #
+        # 这条规则同时让"跳关练习"终于有反馈：以前 `_start_level > 0` 直接
+        # return，卡在第 4 关的人练十遍也拿不到任何一句话。
+        if self.level_index == self._start_level:
+            self.new_level_record = records.submit_level(
+                self.level_index, self.world.record())
+            if self.new_level_record:
+                self.best = records.load()
         # 还有下一关：只放一段过场，不结算。结算页是"一局结束"的界面，
         # 半路弹出来会把"三关是一次行动"切碎成三段互不相干的小局。
         if self.level_index + 1 < len(L.LEVELS):
             self._next_timer = 1.6
             return
-        # 用 `--level N` 中途开局的这一局不计入最佳纪录：
+        # 用 `--level N` 中途开局的这一局不计入**整局**纪录：
         # 从第 3 关起步只要 35 秒就能"打完三关"，交了就是一条永远刷不掉的假纪录 ——
         # 存档是玩家唯一的数据，宁可这一局不记，也不能让它被作弊值污染。
+        # （单关纪录不在此列：它比的就是"这一关"，起步关的成绩是干净的。）
         if self._start_level > 0:
             return
         self.new_record = records.submit(self.world.record())
         self.best = records.load()
+
+    def _end_best(self) -> tuple:
+        """结算页该拿哪条纪录来比，以及它叫什么。
+
+        跳关局打的只是**一关**，如果还摆着跨五关的整局纪录，玩家看到的
+        是一条永远够不着的数字，"新纪录"也永远不会亮 —— 那等于告诉他
+        "你这一局没有意义"。所以：正式局比整局，跳关局比本关。
+        """
+        if self._start_level > 0:
+            return records.level_best(self.best, self.level_index), "本关最佳"
+        return self.best, "最佳纪录"
 
     # ============ 渲染 ============
     def _render(self, dt: float = 1 / 60.0) -> None:
@@ -641,8 +673,10 @@ class Game:
         if self._next_timer > 0:
             self._draw_level_clear(screen)
         elif self.world.state in (C.STATE_VICTORY, C.STATE_DEFEAT):
-            self.hud.draw_end(screen, self.world, self.best, self.new_record,
-                              self._time_accum)
+            end_best, end_label = self._end_best()
+            self.hud.draw_end(screen, self.world, end_best,
+                              self.new_record or self.new_level_record,
+                              self._time_accum, end_label)
         pygame.display.flip()
 
     def _draw_level_clear(self, screen) -> None:
@@ -678,6 +712,15 @@ class Game:
                 f"弹药 {self.player.ammo} · 石子 {self.player.stones}")
         tail = self.hud.tc.get("lv_time", line, 17, (255, 215, 140))
         screen.blit(tail, tail.get_rect(center=(cx, cy + 84)))
+
+        # 破了本关最佳才多这一行。卡片的设计是"不报分数、只报进度"，
+        # 所以这里只给纪录本身，不像结算页那样铺开风格分明细 ——
+        # 一行"你刚才那一下是新纪录"是反馈，一整页账是打断。
+        if self.new_level_record:
+            rec = self.hud.tc.get("lv_newrec",
+                                  f"本关新纪录 · {self.world.score()} 分",
+                                  17, (120, 240, 190), bold=True)
+            screen.blit(rec, rec.get_rect(center=(cx, cy + 112)))
 
     def _pulse(self) -> float:
         return 0.5 + 0.5 * math.sin(self._time_accum * 2.5)

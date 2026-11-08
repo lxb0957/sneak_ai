@@ -2,6 +2,17 @@
 
 故意做得极简（读失败就当没有记录），因为"存档"不是这个项目的重点，
 但"有记录可追"是玩家愿意再玩一局的最短路径。
+
+存档里其实是**两套纪录**，可比范围不同，不能混在一起：
+
+- 整局纪录（顶层字段）：从第 1 关起步、一路打到底的那一条，跨五关累计。
+- 单关纪录（`per_level`）：只认"从第 N 关起步、且打的就是第 N 关"的成绩。
+
+为什么单关纪录必须限定"起步那一关"：从第 1 关连打到第 3 关时，
+`elapsed` 里已经含了前两关的时间，拿去和"直接挑战第 3 关"的成绩比，
+练习成绩永远低于正式成绩 —— 那不是玩家变差了，是两个项目不同。
+所以只有 `level_index == _start_level` 的那一关才进单关榜（判定在 Game 里，
+这里只负责校验和落盘）。
 """
 
 import datetime
@@ -16,6 +27,15 @@ from .. import constants as C
 # 时间戳格式与写入点共用同一个常量：写的是 "%Y-%m-%d %H:%M"，
 # 读的时候也按这个形状校验，两边各写一份字符串迟早会不一致。
 WHEN_FMT = "%Y-%m-%d %H:%M"
+
+# 单关纪录在存档里的字段名。单独一个字段而不是塞进主记录，是因为两者的
+# 可比范围不同：整局纪录跨五关，单关纪录只认第几关，混在一起会互相覆盖。
+PER_LEVEL_KEY = "per_level"
+
+# 单关纪录的键是关卡序号的字符串。上限取得比关卡数宽，是为了"关卡数变了"
+# 也不丢内容 —— 但必须有上限：这个字段来自外部文件，一个手改的
+# `"per_level": {"-1": ...}` 不该被当成有效关卡画到菜单上。
+MAX_LEVEL_KEY = 32
 
 # 允许测试覆盖（避免测试污染真实记录文件）
 RECORD_FILE: Optional[Path] = None
@@ -112,6 +132,66 @@ def _mtime_when() -> str:
         return ""
 
 
+def _clean_level(value) -> dict:
+    """把一条单关纪录规整成界面能直接用的形状；不像就返回空 dict。
+
+    只留界面真会读的字段（分数/用时/评级/发现/击倒/时间），不把整条
+    `record()` 原样塞进去：单关纪录没有"打了几关"这种概念，
+    留着它迟早会被哪个界面当成"整局纪录"读出来。
+    """
+    if not isinstance(value, dict):
+        return {}
+    score = _as_int(value.get("score"), 0)
+    if score <= 0:
+        return {}
+    t = value.get("time")
+    return {
+        "score": score,
+        "time": float(t) if isinstance(t, (int, float)) else 0.0,
+        "spotted": _as_int(value.get("spotted"), 0),
+        "kills": _as_int(value.get("kills"), 0),
+        "rank": value["rank"] if isinstance(value.get("rank"), str) else "-",
+        "when": _as_when(value.get("when")),
+    }
+
+
+def _clean_per_level(value) -> dict:
+    """规整整个 `per_level` 字段：坏键、坏值一律丢掉，绝不抛异常。
+
+    这个字段是**玩家可以直接编辑的文件**的一部分。一个手写的 `"-1"`、
+    一个被旧版本写成 `null` 的条目，都不该让菜单在启动时崩掉 ——
+    存档的唯一职责是"读不出来就当没有"，不是"报告用户文件坏了"。
+    """
+    if not isinstance(value, dict):
+        return {}
+    out = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not key.isdigit():
+            continue
+        idx = int(key)
+        if not 0 <= idx <= MAX_LEVEL_KEY:
+            continue
+        row = _clean_level(item)
+        if row:
+            out[str(idx)] = row
+    return out
+
+
+def level_best(best: dict, idx: int) -> dict:
+    """取第 idx 关的最佳纪录；没有就返回空 dict（调用方按"暂无"处理）。"""
+    per = (best or {}).get(PER_LEVEL_KEY) or {}
+    return per.get(str(idx)) or {}
+
+
+def _write(data: dict) -> bool:
+    try:
+        with open(path(), "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except (OSError, TypeError):
+        return False
+    return True
+
+
 def load() -> dict:
     """读最佳记录。任何格式问题都当"没有记录"，绝不让坏存档挡住游戏。"""
     try:
@@ -162,6 +242,9 @@ def load() -> dict:
     # 会带着"看起来和两关成绩同一量级"的样子继续挂在菜单上。
     if not clean["levels"] and clean.get("score"):
         clean["levels"] = 1
+    # 单关纪录：老存档（v1.8.7 之前）没有这个字段，读到的是空表 ——
+    # 界面上表现为"每关都还没有成绩"，而不是"存档坏了"。
+    clean[PER_LEVEL_KEY] = _clean_per_level(data.get(PER_LEVEL_KEY))
     return clean
 
 
@@ -196,9 +279,39 @@ def submit(record: dict) -> bool:
     old = load()
     if score <= _as_int(old.get("score"), -1):
         return False
-    try:
-        with open(path(), "w", encoding="utf-8") as f:
-            json.dump(record, f, ensure_ascii=False, indent=2)
-    except (OSError, TypeError):
+    # 整局纪录和单关纪录写在同一个文件里，**必须互相保留**。
+    # 这里如果直接 `json.dump(record)`，玩家每破一次整局纪录，
+    # 辛苦刷出来的单关成绩就全被清空 —— 而且不会有任何报错，
+    # 只表现为"菜单里那些关的纪录又没了"。两个写入口都做合并，缺一不可。
+    merged = dict(record)
+    if old.get(PER_LEVEL_KEY):
+        merged[PER_LEVEL_KEY] = old[PER_LEVEL_KEY]
+    return _write(merged)
+
+
+def submit_level(level_index: int, record: dict) -> bool:
+    """提交一条单关成绩；刷了该关最佳返回 True。
+
+    "哪一关的成绩"由调用方担保（必须是起步关），这里只做两件校验：
+    分数 > 0、关卡序号在合理范围内。分数比较和整局纪录同口径 ——
+    都用 `score()`，所以"慢但干净"的一局有可能赢过"快但开枪"的一局，
+    这正是计分公式想说的事，不该在纪录层另立一套。
+    """
+    score = _as_int(record.get("score"))
+    if score <= 0:
         return False
-    return True
+    idx = _as_int(level_index, -1)
+    if not 0 <= idx <= MAX_LEVEL_KEY:
+        return False
+    old = load()
+    per = dict(old.get(PER_LEVEL_KEY) or {})
+    if score <= _as_int((per.get(str(idx)) or {}).get("score"), -1):
+        return False
+    row = _clean_level(record)
+    if not row:
+        return False
+    per[str(idx)] = row
+    # 同样要合并：只替换 per_level，整局纪录原样写回。
+    merged = {k: v for k, v in old.items() if k != PER_LEVEL_KEY}
+    merged[PER_LEVEL_KEY] = per
+    return _write(merged)
