@@ -35,11 +35,14 @@ _TEXT = (226, 232, 240)
 class Menu:
     """主菜单画面与输入。self.active 为 False 时进入游戏。"""
 
-    def __init__(self, best: dict, sel: int = 0):
+    def __init__(self, best: dict, sel: int = 0, assist: bool = False):
         self.active = True
         self.tc = TextCache()
         self.best = best
         self.sel = max(0, min(int(sel), len(L.LEVELS) - 1))
+        # 辅助模式开关。菜单只是"改一个布尔"，落盘和生效都在 Game 里 ——
+        # 菜单不读存档也不建世界，它连 pygame 之外的东西都不该碰。
+        self.assist = bool(assist)
         # draw() 把每块文字的落点记下来。菜单是唯一没人审计的界面，
         # 而它恰好被"多加一行就顶到回车提示上"坑过一次（见下面 rows 的注释）。
         self.rects = []
@@ -88,6 +91,10 @@ class Menu:
                 sfx.toggle_mute()
                 from . import settings
                 settings.save(sfx.muted)
+            elif ev.key == pygame.K_a:
+                # A = assist。不占用方向键 / 回车 / M / ESC 中的任何一个。
+                self.assist = not self.assist
+                sfx.play("pickup", cooldown=0.03, volume=0.28)
         elif ev.type == pygame.MOUSEBUTTONDOWN:
             # 点在箭头附近 = 换关；点别处 = 开局。箭头被画成可点的样子，
             # 就不能点下去反而直接进游戏 —— 那是最容易让人骂一句的交互。
@@ -103,7 +110,10 @@ class Menu:
         单独抽出来是为了能被测试断言。菜单的文案规则和选关规则一样，
         都属于"说错了玩家就误解"的东西，不该只活在 draw() 里的一个 f-string 中。
         """
-        foot = f"M 音效：{'开' if not muted else '关'}    ESC 退出"
+        foot = (f"M 音效：{'开' if not muted else '关'}    "
+                f"A 辅助：{'开' if self.assist else '关'}    ESC 退出")
+        if self.assist:
+            foot += "    · 辅助模式不记纪录"
         if self.sel > 0:
             foot += "    · 跳关只记本关成绩，不进总榜"
         return foot
@@ -132,8 +142,15 @@ class Menu:
 
         # 关卡数从注册表里读，不写死 —— 加第三关时这里不该改。
         n = len(L.LEVELS)
-        blit(self.tc.get("desc", f"连续潜入 {n} 处设施，拿到数据，活着回来。",
-                         19, _DIM), (W // 2, H // 2 - 30), "desc")
+        # 辅助模式写在标题下面这句里，而不是只藏在底栏：底栏是"设置",
+        # 这一行是"这一局会发生什么"。打开辅助之后就压着回车键开局的人，
+        # 至少会在这一行上看到"敌人更弱、成绩不记"。
+        desc = f"连续潜入 {n} 处设施，拿到数据，活着回来。"
+        if self.assist:
+            desc += "　· 辅助：敌人更弱，成绩不记"
+        blit(self.tc.get(("desc", self.assist), desc, 19,
+                         (255, 196, 140) if self.assist else _DIM),
+             (W // 2, H // 2 - 30), "desc")
 
         # 最佳纪录：有就展示，给"能通关"的暗示；没有就不占地方
         if self.best.get("score"):

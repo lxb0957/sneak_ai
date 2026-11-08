@@ -57,6 +57,11 @@ class World:
     # 封锁短一点、给玩家"等一等就能走"的余地；末关拿第一个节点就响警报，
     # 封锁期要足够长，才逼得出"后半段在警报下跑完"这段节奏。
     alert_duration: float = C.ALERT_DURATION
+    # 辅助模式：这一局用更弱的敌人（见 constants 里的三个系数）。
+    # 世界只存"开没开"和一个视野系数，具体乘哪个常量在 __main__ 建世界时算 ——
+    # World 不该知道菜单、不该知道存档，它只需要能让 `can_see` 读到系数。
+    assist: bool = False
+    view_mul: float = 1.0
     player: object = None
     enemies: List[object] = field(default_factory=list)
     coordinator: object = None  # 协同分配器
@@ -169,7 +174,8 @@ class World:
         视线是规则。只有把系数砸进 `can_see` 的入参，黑灯才真的改变玩法；
         否则玩家只会看到屏幕变暗，然后被发现时一脸问号。
         """
-        return self.blackout_view if self.blackout_left > 0.0 else 1.0
+        scale = self.blackout_view if self.blackout_left > 0.0 else 1.0
+        return scale * self.view_mul
 
     def nearby_power(self, radius: float = 1.8):
         """玩家脚下能按到的闸（下标），没有就是 None。

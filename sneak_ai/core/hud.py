@@ -68,7 +68,13 @@ class HUD:
         # 关卡号并进目标行，不另起一行：状态面板是定高的（12,12,322,128），
         # 四行已经排满，加第五行要么压到下面的"尸体已暴露"，要么整块重排。
         # 前缀只有"第N关｜"四个多字，20px 字号下约 70px，放得下。
-        tag = f"第{world.level_index + 1}关｜" if world.level_name else "目标："
+        # 辅助模式的角标并进目标行：状态面板是定高的，四行已经排满，
+        # 再插一行就会压到"尸体已暴露"。前缀只多 6 个字（20px 下约 60px），
+        # 目标行本来就有余量，且它必须**常驻** —— 玩家不能打着打着忘了
+        # "这一局不算纪录"，结算页看到"暂无新纪录"才知道。
+        head = "辅助｜" if getattr(world, "assist", False) else ""
+        tag = (head + f"第{world.level_index + 1}关｜"
+               if world.level_name else head + "目标：")
         if world.state == C.STATE_INFILTRATE:
             # 多节点关卡要把"还剩几个"写出来：只写"潜入数据终端"会让玩家
             # 拿完第一个之后以为该撤了，然后发现撤离点不亮（第 3 关的常见困惑）。
@@ -572,7 +578,12 @@ class HUD:
         # 边算边画的话，一遇到"多一行"就会撞上下面已经画好的东西。
         # 所以先把所有候选行排成一张待画清单（带真实行高），
         # 定完版式再统一 blit —— 布局和绘制彻底分开。
-        stats = [
+        stats = []
+        # 辅助模式放在第一行：结算页是"这一局的结果"，而"这一局不算数"
+        # 比用时/被发现都更该先读到。
+        if getattr(world, "assist", False):
+            stats.append(("辅助模式", "开 · 不计纪录"))
+        stats += [
             ("用时", f"{world.elapsed:.1f} 秒"),
             ("被发现", f"{world.spotted} 次"),
             ("击倒", f"{world.kills} 人"),

@@ -31,6 +31,7 @@ from . import constants as C
 from .ai.coordination import Coordinator
 from .audio.sfx import SFX
 from .core import debrief
+from .core import tutorial
 from .core import records
 from .core import levels as L
 from .core.camera import Camera
@@ -122,7 +123,11 @@ class Game:
         self.px = PixelRenderer()
         self.hud = HUD()
         self.best = records.load()
+        # 辅助模式：偏好跨局记住（和静音一样），菜单里按 A 开关。
+        # 它影响建世界时的敌人参数，所以必须在 _new_world() 之前读出来。
+        self.assist = settings.load_assist()
         self.menu = Menu(self.best)
+        self.menu.assist = self.assist
 
         self._time_accum = 0.0  # 驱动脉动/动画相位
         self._step_acc = 0.0    # 脚步音效的移动距离累积
@@ -134,6 +139,9 @@ class Game:
         self.new_level_record = False
         self._prev_stamina = C.STAMINA_MAX
         self._tips_shown: set = set()   # 本会话已提示过的资源类型
+        # 说过的**一次性**引导（被发现/体力见底/拿到第一份数据）。它落盘，
+        # 因为"每局都弹同一句"对老玩家是噪声；本会话那三个字在 settings 里。
+        self._taught: set = settings.load_taught()
         self._power_tip_cd = 0.0        # 总闸提示的冷却（别每帧刷屏）
         self._show_intro = False        # 从菜单开局的第一条引导
         self.show_map = False           # Tab 全图：默认关，进关卡时重置
@@ -212,6 +220,14 @@ class Game:
         self.fullmap = FullMap(self.world.grid)
         self.show_map = False           # 换关时收起，别把上一关的图带过来
 
+        # 辅助模式：三个系数只作用在"敌人的能力"上（见 constants）。
+        # 在这里一次算清，往下所有 enemy / alert 的构造都读这几个局部量 ——
+        # 散在五处各乘一次的话，改哪个系数都要玩一遍才敢确认。
+        k_view = C.ASSIST_VIEW if self.assist else 1.0
+        k_chase = C.ASSIST_CHASE if self.assist else 1.0
+        k_alert = C.ASSIST_ALERT if self.assist else 1.0
+        self.world.assist = self.assist
+        self.world.view_mul = k_view
         player_spawn, enemy_cfg = L.spawn_and_patrols(lv, self.world.grid)
         self.player = Player(player_spawn[0], player_spawn[1])
         # 石子是**关卡参数**（Level.stones），不是全局常量：第 5 关五道闸，
@@ -220,8 +236,9 @@ class Game:
         self.world.player = self.player
         self.world.enemies = [
             Enemy(x, y, patrol=pts, perception=self.perception,
-                  chase_speed=lv.chase,
-                  alert_speed=lv.alert_speed, alert_view=lv.alert_view)
+                  chase_speed=lv.chase * k_chase,
+                  alert_speed=lv.alert_speed * k_chase,
+                  alert_view=lv.alert_view * k_view)
             for (x, y, pts) in enemy_cfg
         ]
         # 决策流里的编号按出场顺序（1 起）。不用坐标或 id()：坐标会随移动变，
@@ -244,7 +261,7 @@ class Game:
                 if face is not None:
                     e.facing = face
                     e.post_facing = face
-        self.world.alert_duration = lv.alert_duration
+        self.world.alert_duration = lv.alert_duration * k_alert
         # 总闸：坐标已经是连续的格中心（关卡里就按坐标写），不再 +0.5。
         self.world.power = [
             {"x": px, "y": py, "used": False} for (px, py) in lv.power
@@ -383,6 +400,11 @@ class Game:
         不另开一个"从菜单选的关卡"字段 —— 两个真值必然对不上。
         """
         self._start_level = self.menu.sel
+        # 菜单里按 A 改的是"下一局"的辅助开关：写到这里并落盘，
+        # 之后 _new_world() 读的就是它。关掉辅助再开局，敌人就恢复原样。
+        if self.menu.assist != self.assist:
+            self.assist = self.menu.assist
+            settings.save(assist=self.assist)
         self._restart_run()
         self._tips_shown = set()
         self._power_tip_cd = 0.0
@@ -399,20 +421,10 @@ class Game:
             return
         if self._show_intro:
             self._show_intro = False
-            if self.level_index == 0:
-                msg = "前往绿色标记的数据终端 —— 蹲下（Shift）移动更安静"
-            else:
-                # 第二关起不重复基础教学，改成一句"这张图想让你紧张什么"。
-                lv = L.LEVELS[self.level_index]
-                msg = f"第 {lv.idx + 1} 关 · {lv.name}　{lv.subtitle}"
-                # 有固定岗的关卡（第 5 关）：把新动词直接说出来。
-                # 这一关的门只有 1 格、里面站着一个人，"等"是等不到的 ——
-                # 如果开场不点名"Q 扔石头"，玩家会在第一道闸前面站到超时，
-                # 然后以为这关坏了。字幕里那句"你就让他走开"是给知道怎么
-                # 走开的人看的；对第一次来的人，动词必须有名字。
-                if lv.posts:
-                    msg += "　·　Q 扔石头，把他引开"
-            self.hud.show_tip(msg, life=6.0)
+            # 文案与"该点哪个键"的规则都在 tutorial 里（纯函数，可断言）。
+            # 这里只负责在正确的时机把它贴到屏幕底部。
+            self.hud.show_tip(tutorial.intro_for(L.LEVELS[self.level_index]),
+                              life=6.0)
         p = self.world.player
         TIPS = {
             "ammo": "弹药包：走近自动补 2 发（上限 8）",
@@ -426,6 +438,14 @@ class Game:
                 self._tips_shown.add(it["kind"])
                 self.hud.show_tip(TIPS[it["kind"]], life=4.0)
                 break
+
+        # 一次性提示：被发现 / 体力见底 / 拿到第一份数据。
+        # 只在"还没说过"时弹一条（底部只有一个位置），说过就记进存档。
+        for key, text in tutorial.once_tips(self.world, p, self._taught):
+            self._taught.add(key)
+            settings.mark_taught(key)
+            self.hud.show_tip(text, life=5.0)
+            break
 
         # 总闸：站到跟前才提示。这个键不写在任何地方，玩家不可能自己发现 ——
         # 但也不能开局就写在屏幕上，那样"发现总闸"这个信息就白给了。
@@ -623,6 +643,12 @@ class Game:
         #
         # 这条规则同时让"跳关练习"终于有反馈：以前 `_start_level > 0` 直接
         # return，卡在第 4 关的人练十遍也拿不到任何一句话。
+        # 辅助模式：这一局不写任何纪录（整局榜 / 单关榜都不写）。
+        # 复盘照记 —— 那是给玩家自己看的，不是排名。
+        if self.assist:
+            if self.level_index + 1 < len(L.LEVELS):
+                self._next_timer = 1.6
+            return
         if self.level_index == self._start_level:
             self.new_level_record = records.submit_level(
                 self.level_index, self.world.record())
