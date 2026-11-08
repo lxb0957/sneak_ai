@@ -19,6 +19,10 @@
     python scripts/ab_level.py --level 0 --runs 96 --off fan      # 只关分工
     python scripts/ab_level.py --level 4 --runs 64 --off post     # 关掉"固定岗例外"
 
+这个脚本只管**补丁式**的开关（在类上换一个方法）。要测"玩家可选项"（比如辅助模式
+那三个系数）用 `scripts/measure_assist.py` —— 它改的是建世界时读的设置，不是
+运行时的方法替换，硬塞进 disable() 会把两种机制混在同一个函数里。
+
 输出的"翻盘 a:b"是 McNemar 的 b/c：
     a = 关掉新逻辑才赢的局（新逻辑让它输了）
     b = 打开新逻辑才赢的局（新逻辑让它赢了）

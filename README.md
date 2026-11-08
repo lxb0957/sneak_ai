@@ -640,6 +640,19 @@ Selector
 
 玩家的速度、体力、弹药一发不动。这不是"把游戏调简单 20%"，是**把那条断崖填平，让后面的内容能被看到**；手感一致，关掉辅助不需要重新学走路。
 
+它到底有没有用，是量出来的，不是推的。`scripts/measure_assist.py` 让开/关两组**共用同一批 60 个开局种子**（开局相位是第 4 关败局的大头），只比较同一局翻没翻盘：
+
+```
+关辅助   42/60 = 70.0%  95%CI[57.5%,80.1%]  胜局均时  60.7s
+开辅助   59/60 = 98.3%  95%CI[91.1%,99.7%]  胜局均时  71.9s
+翻盘  只有辅助赢 18 局 / 只有关着赢 1 局   McNemar p = 7.6e-05
+```
+
+两处容易读错的地方：
+
+- **胜局均时反而变长**（60.7 → 71.9 秒）不是"打得更慢"。多出来的 18 局原本是"被看见 → 死"，现在变成"被看见 → 跑掉 → 绕远路躲回去 → 通关"。填的是"活下来"，不是"变快"。
+- **70% 不能跟上面那个 25% 并排比。** 两个数都是机器人量的，但不是一把尺子：25% 是 `measure_levels.py` 的难度基线（不带枪、前四关不捡补给），这里量的是"辅助对一局完整玩法的影响"（带枪、捡补给）。同一关两把尺子差 45 个点，说明的不是辅助太强，是口径不同。能并排的只有那两行 —— 同种子、同配置，只差一个 A 键。
+
 代价必须写清楚：**辅助模式下这一局不计任何纪录** —— 整局榜和单关榜都不写，但复盘照记（那是给自己看的，不是排名）。这句话出现在三个地方：菜单底栏、HUD 目标行开头的「辅助」角标、结算页第一行「辅助模式 · 开 · 不计纪录」。只在代码里不计、界面上不说，等于让玩家以为游戏吞了他的成绩。
 
 两个实现上的坑：
@@ -909,8 +922,8 @@ dist/潜行协议.exe --selfcheck        # 打完之后先自检，别靠人盯�
 ### 发布（打 tag 就够）
 
 ```bash
-git tag -a v1.8.8 -m "..."     # 唯一的人工动作
-git push origin v1.8.8
+git tag -a v1.8.9 -m "..."     # 唯一的人工动作
+git push origin v1.8.9
 ```
 
 `.github/workflows/release.yml` 接住 tag，串行跑三个 job：
@@ -925,13 +938,13 @@ git push origin v1.8.8
 
 1. **打包必须在 `windows-latest` 上做**。PyInstaller 不能交叉编译，Linux 上跑出来的不是 exe。这也是"为什么不能本地打包后手动上传"的根本原因——不是慢，是那条路要靠人记得每一步，而人记得住的步骤迟早会在某个赶时间的晚上漏掉。
 2. **测试清单只有一份**。`ci.yml` 和 `release.yml` 都 `uses: ./.github/workflows/test-suite.yml`。各写一份的话，加了 `test_w27` 只改一边，于是"发布前测试全绿"只对 push 成立、对 tag 不成立——**而且它不会报错**。
-3. **产物名由打包器一步到位**。`build_exe.py --name StealthProtocol-v1.8.8-win64`：默认名是中文的「潜行协议」，在 Windows runner 上"重命名中文文件再交给下一个 shell 步骤"要横跨 cp936 / cp65001 两套编码。中文名留给双击玩的人，ASCII 名给机器。
+3. **产物名由打包器一步到位**。`build_exe.py --name StealthProtocol-v1.8.9-win64`：默认名是中文的「潜行协议」，在 Windows runner 上"重命名中文文件再交给下一个 shell 步骤"要横跨 cp936 / cp65001 两套编码。中文名留给双击玩的人，ASCII 名给机器。
 4. **`publish` 不 checkout 被发布的 tag**。`gate` / `build` 必须 checkout tag（被打包的是那个提交，前后得是同一个），`publish` 反过来要 checkout **触发 ref**。混成一个 ref 的后果是"**修了流水线的 bug 却永远用不上**"——修 bug 的脚本写在 main 上，而流水线每次都从老 tag 里取工具，那个脚本在那一版里根本不存在。
 
 正文从 `docs/releases/<tag>.md` 读（首行 `# 一句话` 会被抽成 Release 标题）；没有这个文件就退化成"上一个 tag 之后的 commit 列表"——能看，但回答不了"这一版是干嘛的"。本地预览：
 
 ```bash
-python scripts/release_notes.py --tag v1.8.8 --print
+python scripts/release_notes.py --tag v1.8.9 --print
 ```
 
 **发完发现正文写错了**：改 `docs/releases/<tag>.md` → 推上去 → 在 Actions 里手动跑 `Release`（填那个 tag）。流水线是幂等的：查到已存在就更新、不存在就新建，附件走 `upload --clobber`，重跑不会撞 409。
@@ -990,6 +1003,7 @@ python scripts/audit_difficulty.py      # 难度体检：门窗口率 / 三条�
 python scripts/audit_levels.py          # 绕路体检：最短路线 / 直线距离 / 绕路比
 python scripts/measure_levels.py        # 难度实测：每关 96 局、跨关同种子配对、Wilson 区间 + 差值区间 + McNemar
 python scripts/ab_level.py --level 0    # 同种子配对 A/B：把某条新逻辑关掉再跑一遍，看翻了几局
+python scripts/measure_assist.py        # 辅助模式 A/B：同一批种子开/关各跑 60 局，McNemar 看翻盘
 python scripts/diag_patrol.py 180        # 巡逻体检：谁卡墙、最长原地不动多久
 python scripts/botrun.py --aware        # 机器人纯潜行通关（能赢就是"关卡有解"的证明）
 python scripts/botrun.py --aware --level 1          # 指定关卡（0=哨站 1=环形枢纽 2=柱林中庭 3=配电所 4=查验站）
