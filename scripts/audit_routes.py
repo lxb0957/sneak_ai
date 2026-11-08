@@ -9,16 +9,30 @@
    这个数等于**最小割**：要同时堵住几个格子才能把地图切断。
    = 1 是单线；2~3 是"有取舍但不多"；>6 基本就是空地撒欢。
 
-2. **两条主路线的长度比**
-   封掉出生舱的东门 → 玩家只能走北弧；封掉南门 → 只能走南弧。
-   两条路线的长度差，就是"绕远换安全"这个取舍的定价。
-
-3. **一条路线要穿几道门**
-   最短路线经过多少个门格。门宽固定 2 格，所以这个数字直接等于
+2. **一条路线要穿几道门**
+   最短路线经过多少个门格。门宽固定 1~2 格，所以这个数字直接等于
    "这一趟要在多少个哨兵眼皮底下卡着时机过门"。
+
+3. **最短路线本身**
+   README 的难度表里那一行"最短路线 235 格"就是它 —— 但**口径必须只有一处**，
+   否则每关各说各的：曾经第 1 关按"往返合计"写 235、第 4 关按"单程"写 88，
+   第 3 关改过地图之后 238 一直没更新（真实是 192）。三个数放在同一行里，
+   读的人没法比较，改图的人也不知道该改哪个。
+
+   现在定死的口径（`route_stats()` 是唯一实现，README 与 test_w31 都引它）：
+
+   **格 = 从出生格开始，依次走完这一关所有数据节点，最后走到撤离格，
+   路径上经过的格子数。每接一段把起点算进来（+1），所以**
+   `格 = 步 + 段数`，`段数 = 数据节点数 + 1`。
+
+   为什么按"节点顺序"走而不是求"访问所有节点的最短路"：关卡里的节点顺序
+   本来就是建议顺序（第 3 关东南→西北的 Z 字），玩家不会去解 TSP；
+   这个数字要回答的是"照设计意图走一趟有多远"，不是"理论最短是多少"。
 
 跑法：
     python scripts/audit_routes.py
+
+退出码：任何一关走不通（数据节点或撤离点不可达）→ 1，可以当门禁用。
 """
 import sys
 from collections import deque
@@ -26,9 +40,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sneak_ai import constants as C
-from sneak_ai.core.grid import GridMap
-from sneak_ai.core.world import DOORS, build_demo_map
+from sneak_ai.core.levels import LEVELS
 
 DIRS = ((1, 0), (-1, 0), (0, 1), (0, -1))
 
@@ -36,6 +48,11 @@ DIRS = ((1, 0), (-1, 0), (0, 1), (0, -1))
 def _floor_cells(grid):
     return [(x, y) for y in range(grid.h) for x in range(grid.w)
             if not grid.is_wall(x, y)]
+
+
+def _cell(point):
+    """连续坐标 → 格子下标（玩家坐标是以格中心记的，取整就是所在格）。"""
+    return (int(point[0]), int(point[1]))
 
 
 def _bfs(grid, start, want_path=False):
@@ -105,65 +122,99 @@ def min_cut_size(grid, start, goal, cap=10):
     return flow
 
 
-def _door_cells():
-    cells = set()
-    for d in DOORS:
-        for y in range(d[1], d[3] + 1):
-            for x in range(d[0], d[2] + 1):
-                cells.add((x, y))
+def door_map(level):
+    """门格 → 门名。`Level.doors` 统一是 (矩形, 名字)，矩形含两端。
+
+    按**名字**去重再计数：一道 2 格宽的门，路线从中间穿过时会踩到 2 个门格，
+    但玩家只过了一道门 —— 数格子会把"过 9 道门"说成"过 18 道门"。
+    """
+    cells = {}
+    for rect, name in level.doors:
+        x0, y0, x1, y1 = rect
+        for y in range(min(y0, y1), max(y0, y1) + 1):
+            for x in range(min(x0, x1), max(x0, x1) + 1):
+                cells[(x, y)] = name
     return cells
 
 
-def _route(grid, start, goal, blocked=()):
-    """在 blocked 之外求最短路，返回 (长度, 穿过的门数)。"""
-    g = GridMap.grid_copy(grid) if hasattr(GridMap, "grid_copy") else None
-    if g is None:
-        g = GridMap(grid.w, grid.h, [row[:] for row in grid.tiles])
-    for c in blocked:
-        g.set_wall(*c)
-    dist, parent = _bfs(g, start, want_path=True)
-    if goal not in dist:
-        return None, 0
-    doors = _door_cells()
-    path, cur = [], goal
-    while cur in parent:
-        path.append(cur)
-        cur = parent[cur]
-    return dist[goal], sum(1 for c in path if c in doors)
+def level_legs(level):
+    """这一关要走的几段：出生 → 节点 1 → … → 节点 n → 撤离。"""
+    pts = [level.spawn, *level.terminals, level.exfil]
+    return [(_cell(a), _cell(b)) for a, b in zip(pts, pts[1:])]
 
 
-def main() -> None:
-    grid = build_demo_map()
-    s = (int(C.EXFIL_POINT[0]), int(C.EXFIL_POINT[1]))
-    t = (int(C.DATA_TERMINAL[0]), int(C.DATA_TERMINAL[1]))
+def route_stats(level, grid=None):
+    """按"出生 → 各节点 → 撤离"求最短路，返回口径里的全部数字。
 
-    floors = _floor_cells(grid)
-    cut = min_cut_size(grid, s, t)
-    best, doors_crossed = _route(grid, s, t)
+    返回 {"steps", "cells", "legs", "doors", "ok"}：
+      steps —— 相邻格之间的移动次数；
+      cells —— 经过的格子数 = steps + 段数；
+      legs  —— 每段的步数（走不通的那段是 None）；
+      doors —— 整条路线穿过几道门（按门名去重，不是门格数）；
+      ok    —— 每一段都走得到。
+    """
+    grid = grid if grid is not None else level.build()
+    doors = door_map(level)
+    steps, legs, crossed = 0, [], set()
+    ok = True
+    for start, goal in level_legs(level):
+        dist, parent = _bfs(grid, start, want_path=True)
+        if goal not in dist:
+            ok = False
+            legs.append(None)
+            continue
+        steps += dist[goal]
+        legs.append(dist[goal])
+        cur = goal
+        while cur in parent:
+            if cur in doors:
+                crossed.add(doors[cur])
+            cur = parent[cur]
+        if cur in doors:
+            crossed.add(doors[cur])
+    return {
+        "steps": steps,
+        "cells": steps + len(legs),
+        "legs": legs,
+        "doors": len(crossed),
+        "ok": ok,
+    }
 
-    # 封掉出生舱东门 → 只能走南弧；封掉南门 → 只能走北弧
-    east_door = [(11, 5), (11, 6)]
-    south_door = [(5, 11), (6, 11)]
-    upper, _ = _route(grid, s, t, blocked=south_door)
-    lower, _ = _route(grid, s, t, blocked=east_door)
 
-    print("关卡拓扑体检")
-    print("=" * 58)
-    print(f"地图 {grid.w}x{grid.h}，可走格 {len(floors)}"
-          f"（开挖率 {len(floors) / (grid.w * grid.h) * 100:.0f}%）")
-    print(f"① 最小割（= 互不重叠路线数）：{cut} 格")
-    print("   判读：要让玩家到不了终端，必须同时堵住这么多格；"
-          "1=单线，2~3=取舍有限，>6=四处漏风")
-    print(f"② 最短路线 {best} 格，穿 {doors_crossed} 道 2 格宽的门")
-    if upper and lower:
-        delta = (lower / upper - 1) * 100
-        print(f"③ 两条主弧：北弧（门多而紧）{upper} 格 / "
-              f"南弧（门少而松）{lower} 格，路程差 {delta:+.0f}%")
-        print("   判读：两条弧长度几乎相等 —— 取舍不来自距离，"
-              "来自「10 道紧门 vs 8 道松门」")
-    print(f"④ 全图 {len(DOORS)} 道门，全部门宽 2 格"
-          f"（2 格 = 一次只够一个人过）")
+def main() -> int:
+    print("关卡拓扑体检（量的是 LEVELS 注册表，不是某一张手写地图）")
+    print("口径：格 = 出生 → 依次摸完所有数据节点 → 撤离，路径上经过的格子数")
+    print("      格 = 步 + 段数（每段起点各算一次）")
+    print("=" * 78)
+    header = (f"{'关':<3}{'名称':<8}{'地图':>9}{'可走':>6}"
+              f"{'最短路线':>10}{'步':>6}{'段':>4}{'穿门':>5}{'最小割':>6}")
+    print(header)
+    print("-" * 78)
+    failed = False
+    for lv in LEVELS:
+        grid = lv.build()
+        st = route_stats(lv, grid)
+        floors = len(_floor_cells(grid))
+        cells = f"{st['cells']} 格" if st["ok"] else "走不通"
+        legs = "+".join("?" if v is None else str(v) for v in st["legs"])
+        # 最小割用出生点与第一个节点：撤离点可能和出生点重合（第 4 关），
+        # 拿它当终点会让"互不重叠路线"变成 0。
+        cut = min_cut_size(grid, _cell(lv.spawn), _cell(lv.terminals[0]))
+        print(f"{lv.idx + 1:<3}{lv.name:<8}{grid.w:>4}x{grid.h:<3}{floors:>7}"
+              f"{cells:>10}{st['steps']:>7}{len(st['legs']):>5}"
+              f"{st['doors']:>5}{cut:>6}   路线 {'+'.join(str(v) for v in st['legs'])}")
+        if not st["ok"]:
+            failed = True
+    print("-" * 78)
+    print("判读：最小割 = 要同时堵住几格才能切断这一关（1=单线，>6=四处漏风）；")
+    print("      穿门 = 这一趟要过几道门 = 几次卡时机（按门名去重）。")
+    for lv in LEVELS:
+        print(f"      第 {lv.idx + 1} 关：{len(lv.doors)} 道门")
+    if failed:
+        print("\n✗ 有目标点走不通 —— 改图之后忘了挖通路？")
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
