@@ -19,12 +19,16 @@ import math
 from typing import Callable, Tuple
 
 from .. import constants as C
-from .grid import GridMap
+from .grid import FLOOR, GridMap
 
 
 # ============ 建造工具 ============
 def flood_floor(m: GridMap, sx: int, sy: int) -> set:
-    """从 (sx, sy) 出发在可走格上做 BFS，返回可达格集合。"""
+    """从 (sx, sy) 出发在可走格上做 BFS，返回可达格集合。
+
+    需要"具体是哪些格子"时用它（审计脚本、测试）。只想知道"连通不连通"
+    或"能到几格"时用 `reachable_count` —— 它不建集合，快一倍以上。
+    """
     seen = {(sx, sy)}
     stack = [(sx, sy)]
     while stack:
@@ -35,6 +39,42 @@ def flood_floor(m: GridMap, sx: int, sy: int) -> set:
             seen.add((nx, ny))
             stack.append((nx, ny))
     return seen
+
+
+def reachable_count(m: GridMap, sx: int, sy: int) -> int:
+    """从 (sx, sy) 出发能走到的格子**总数**（不建集合）。
+
+    给 `add_cover` 用：它每放一块柱子都要问"地图还连通吗"，判据只是
+    "可达格数 == 空地格数"。用 `flood_floor` 做这件事要建几千个 (x,y)
+    元组再塞进 set，而我们只要一个数字 —— 扁平 visited + 整数栈就够，
+    连哈希都不用。语义与 `len(flood_floor(...))` 完全一致。
+    """
+    if m.is_wall(sx, sy):
+        return 0
+    w, h, tiles = m.w, m.h, m.tiles
+    seen = bytearray(w * h)
+    start = sy * w + sx
+    seen[start] = 1
+    stack = [start]
+    n = 0
+    while stack:
+        i = stack.pop()
+        n += 1
+        x = i % w
+        y = i // w
+        if x > 0 and not seen[i - 1] and tiles[y][x - 1] == FLOOR:
+            seen[i - 1] = 1
+            stack.append(i - 1)
+        if x + 1 < w and not seen[i + 1] and tiles[y][x + 1] == FLOOR:
+            seen[i + 1] = 1
+            stack.append(i + 1)
+        if y > 0 and not seen[i - w] and tiles[y - 1][x] == FLOOR:
+            seen[i - w] = 1
+            stack.append(i - w)
+        if y + 1 < h and not seen[i + w] and tiles[y + 1][x] == FLOOR:
+            seen[i + w] = 1
+            stack.append(i + w)
+    return n
 
 
 def carve(m: GridMap, x0: int, y0: int, x1: int, y1: int) -> None:
@@ -60,6 +100,9 @@ def add_cover(m: GridMap, blocks, spawn, protected=()) -> list:
     """
     placed = []
     prot = set(protected)
+    # 空地总数只数一次，之后随"放柱子/回退"增减 —— 原来每块柱子都把
+    # 整张图重扫一遍（26 块 × 4800 格），是关卡构建里最贵的一段。
+    total = sum(1 for y in range(m.h) for x in range(m.w) if not m.is_wall(x, y))
     for (bx, by, bw, bh) in blocks:
         cells = [(bx + dx, by + dy) for dx in range(bw) for dy in range(bh)]
         if any(m.is_wall(cx, cy) for cx, cy in cells):
@@ -68,11 +111,11 @@ def add_cover(m: GridMap, blocks, spawn, protected=()) -> list:
             continue   # 门口、目标点周围必须保持畅通
         for cx, cy in cells:
             m.set_wall(cx, cy)
-        reach = flood_floor(m, int(spawn[0]), int(spawn[1]))
-        total = sum(1 for y in range(m.h) for x in range(m.w) if not m.is_wall(x, y))
-        if len(reach) < total:
+        total -= len(cells)
+        if reachable_count(m, int(spawn[0]), int(spawn[1])) < total:
             for cx, cy in cells:
                 m.set_floor(cx, cy)
+            total += len(cells)
             continue
         placed.append((bx, by, bw, bh))
     return placed

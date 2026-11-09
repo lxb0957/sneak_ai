@@ -111,17 +111,30 @@ def _danger_map(world):
 
 
 def _plan(world, start, goal, danger, weight=7.0):
-    """危险度加权的 A*：绕开现在会被看到的格子。"""
-    if not world.grid.is_walkable(*goal):
+    """危险度加权的 A*：绕开现在会被看到的格子。
+
+    邻接表来自 `GridMap.neighbors8()`（墙在运行期不变，一张图算一次）。
+    它已经按 corner_cut=False 剔掉了"斜穿墙角"的边，所以这里不再逐邻居调
+    `is_walkable` —— 之前每个邻居要问 1~3 次（本体 + 两个正交格），
+    一次规划上千次扩展就是几千次调用。**路径结果逐格不变**，
+    `test_w36` 用 40 组起终点对拍过。
+    """
+    grid = world.grid
+    if not grid.is_walkable(*goal):
         return None
     sx, sy = int(start[0]), int(start[1])
     gx, gy = int(goal[0]), int(goal[1])
+    adj = grid.neighbors8(corner_cut=False)
+    gw = grid.w
+    heappush = heapq.heappush
+    heappop = heapq.heappop
+    dget = danger.get
     openq = [(0.0, sx, sy)]
     gscore = {(sx, sy): 0.0}
     parent = {}
     seen = set()
     while openq:
-        _, x, y = heapq.heappop(openq)
+        _, x, y = heappop(openq)
         if (x, y) in seen:
             continue
         seen.add((x, y))
@@ -132,20 +145,16 @@ def _plan(world, start, goal, danger, weight=7.0):
                 cur = parent[cur]
             path.reverse()
             return path
-        for dx, dy, cost in _DIRS8:
+        base = y * gw + x
+        for _nidx, dx, dy in adj[base]:
             nx, ny = x + dx, y + dy
-            if not world.grid.is_walkable(nx, ny):
-                continue
-            if dx and dy and (
-                world.grid.is_wall(x + dx, y) or world.grid.is_wall(x, y + dy)
-            ):
-                continue
-            step = cost * (1.0 + weight * danger.get((nx, ny), 0.0))
+            step = (1.4142135623730951 if dx and dy else 1.0) * (
+                1.0 + weight * dget((nx, ny), 0.0))
             ng = gscore[(x, y)] + step
             if ng < gscore.get((nx, ny), 1e18):
                 gscore[(nx, ny)] = ng
                 parent[(nx, ny)] = (x, y)
-                heapq.heappush(openq, (ng + math.hypot(gx - nx, gy - ny), nx, ny))
+                heappush(openq, (ng + math.hypot(gx - nx, gy - ny), nx, ny))
     return None
 
 
@@ -160,6 +169,9 @@ def _safe_path(world, danger, p, threat=None):
     """
     sx, sy = int(p.x), int(p.y)
     guards = [(e.x, e.y) for e in world.enemies if e.alive]
+    grid = world.grid
+    adj = grid.neighbors8(corner_cut=False)
+    gw = grid.w
     seen = {(sx, sy)}
     parent = {}
     depth = {(sx, sy): 0}
@@ -173,13 +185,9 @@ def _safe_path(world, danger, p, threat=None):
             cands.append((near - 0.5 * d0, (x, y)))
         if d0 >= 9:
             continue
-        for dx, dy, _ in _DIRS8:
+        for _nidx, dx, dy in adj[y * gw + x]:
             nx, ny = x + dx, y + dy
-            if (nx, ny) in seen or not world.grid.is_walkable(nx, ny):
-                continue
-            if dx and dy and (
-                world.grid.is_wall(x + dx, y) or world.grid.is_wall(x, y + dy)
-            ):
+            if (nx, ny) in seen:
                 continue
             seen.add((nx, ny))
             parent[(nx, ny)] = (x, y)

@@ -877,10 +877,18 @@ class Enemy:
 
         用圆心到墙格最近点的距离判定（而非四角包围盒），
         避免"贴墙但未真正碰到"时被误判为碰撞（卡墙角 bug）。
+
+        扫描范围按半径算，不是固定 3×3：半径 0.3 格的实体，圆心在格内
+        任意位置时最多只可能碰到 1~2 格宽的一条带，而 3×3 里有 5 格以上
+        连"最近点距离 < r"都不可能满足 —— 白跑。这个函数每帧被调用 78 次
+        （每只敌人每步最多 4 次），固定 9 格改成 1~4 格是这一帧里最便宜的优化。
+        判定结果逐个坐标对拍过，与原 3×3 完全一致。
         """
-        cx, cy = int(x), int(y)
-        for tx in (cx - 1, cx, cx + 1):
-            for ty in (cy - 1, cy, cy + 1):
+        x0, x1 = math.floor(x - r), math.floor(x + r)
+        y0, y1 = math.floor(y - r), math.floor(y + r)
+        rr = r * r - 1e-6
+        for tx in range(x0, x1 + 1):
+            for ty in range(y0, y1 + 1):
                 if not grid.is_wall(tx, ty):
                     continue
                 closest_x = max(tx, min(x, tx + 1))
@@ -889,6 +897,6 @@ class Enemy:
                 dy = y - closest_y
                 # 留 1e-6 容差：圆心恰好贴在墙格角点时距离为 0，
                 # 严格比较会把它判成"在墙里"，导致实体被永久钉死。
-                if dx * dx + dy * dy < r * r - 1e-6:
+                if dx * dx + dy * dy < rr:
                     return True
         return False

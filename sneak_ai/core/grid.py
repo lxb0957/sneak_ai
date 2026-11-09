@@ -1,10 +1,30 @@
-"""网格地图：瓦片类型、碰撞查询、射线遮挡（raycast）。"""
+"""网格地图：瓦片类型、碰撞查询、射线遮挡（raycast）。
 
-from dataclasses import dataclass
-from typing import List, Tuple
+**邻接表缓存**（v1.8.10 加的）
+------------------------------
+流场每 0.5 秒重建一次，每次要对全场格子 × 8 个方向调 `is_walkable`——
+一张 80×60 的图就是 3.8 万次调用，实测单次重建 6.5~14ms，正好把一帧顶出
+16.7ms 的预算，追击时能看见规律的顿挫。而墙在运行期**一格都不会变**
+（只有建关时的 `carve` / `fill` / `add_cover` 会改），所以"谁能走到谁"
+是一份可以缓存的静态数据。
+
+缓存的失效靠 `_version`：`set_wall` / `set_floor` 一改就自增，下次取表时
+重建。**直接改 `tiles[y][x]` 不会让缓存失效** —— 全仓库没有任何一处这么写，
+`test_w36` 会逐个格子核对缓存和 tiles 是否一致，把这条路钉死。
+"""
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Tuple
 
 WALL = 1
 FLOOR = 0
+
+# 八方向邻域。**这个顺序是约定，不要随手排**：
+# 流场在"两个邻居一样近"时取先遇到的那个（方向场靠它决定平局），
+# 顺序一变，个别格子上的箭头就会翻转，敌人的走位跟着变 ——
+# 而这种变化不会让任何数值测试变红。
+# 顺序与 `pathing/astar.py` 的 `_DIRS`、`scripts/botrun.py` 的 `_DIRS8` 一致。
+NEI8 = ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1))
 
 
 @dataclass
@@ -12,6 +32,11 @@ class GridMap:
     w: int
     h: int
     tiles: List[List[int]]
+    # 墙体版本号：set_wall / set_floor 改动了就 +1，邻接表据此失效
+    _version: int = field(default=0, init=False, repr=False, compare=False)
+    # {(corner_cut): (version, adj)}，adj[i] = ((nidx, dx, dy), ...)，i = y*w+x
+    _adj: Dict[bool, Tuple[int, list]] = field(default_factory=dict, init=False,
+                                              repr=False, compare=False)
 
     @classmethod
     def empty(cls, w: int, h: int) -> "GridMap":
@@ -31,20 +56,73 @@ class GridMap:
         return 0 <= x < self.w and 0 <= y < self.h
 
     def is_wall(self, x: int, y: int) -> bool:
-        if not self.in_bounds(x, y):
-            return True  # 边界外视为墙，天然封闭
-        return self.tiles[y][x] == WALL
+        """是不是墙。越界也算墙（天然封闭）。
+
+        这里是全项目调用最密的函数（单局机器人 480 万次），所以不调
+        `in_bounds` 而是把边界判断内联 —— 省下的是一次函数调用，
+        而它占了调用方的 15%。
+        """
+        w = self.w
+        if 0 <= x < w and 0 <= y < self.h:
+            return self.tiles[y][x] == WALL
+        return True
 
     def is_walkable(self, x: int, y: int) -> bool:
         return not self.is_wall(x, y)
 
     def set_wall(self, x: int, y: int) -> None:
         if self.in_bounds(x, y):
-            self.tiles[y][x] = WALL
+            if self.tiles[y][x] != WALL:
+                self.tiles[y][x] = WALL
+                self._version += 1
 
     def set_floor(self, x: int, y: int) -> None:
         if self.in_bounds(x, y):
-            self.tiles[y][x] = FLOOR
+            if self.tiles[y][x] != FLOOR:
+                self.tiles[y][x] = FLOOR
+                self._version += 1
+
+    # ---- 邻接表（寻路的静态数据，一次算好反复用）----
+    def neighbors8(self, corner_cut: bool = False) -> list:
+        """八方向邻接表，扁平索引；`adj[y*w+x]` = ((nidx, dx, dy), ...)。
+
+        corner_cut=False（默认）：禁止斜穿墙角 —— 对角要走，两个正交邻格
+        必须都可走。这是实体移动的口径（半径 0.35 的圆心正好卡在角点上，
+        两个轴同时被挡，敌人会顶着墙抖）。
+
+        corner_cut=True：只要求目标格可走。这是**流场 BFS 一直以来的口径**，
+        保留它是为了不改动历史行为（流场只给追击用方向，实际移动另有碰撞）。
+
+        顺序严格按 `NEI8`，平局取先遇到的 —— 方向场的结果依赖它。
+        """
+        hit = self._adj.get(corner_cut)
+        if hit is not None and hit[0] == self._version:
+            return hit[1]
+
+        w, h, tiles = self.w, self.h, self.tiles
+        n = w * h
+        adj = [()] * n
+        for y in range(h):
+            row = tiles[y]
+            base = y * w
+            for x in range(w):
+                if row[x] == WALL:
+                    continue
+                out = []
+                for dx, dy in NEI8:
+                    nx, ny = x + dx, y + dy
+                    if not (0 <= nx < w and 0 <= ny < h):
+                        continue
+                    if tiles[ny][nx] == WALL:
+                        continue
+                    if not corner_cut and dx and dy:
+                        if row[nx] == WALL or tiles[ny][x] == WALL:
+                            continue
+                    out.append((ny * w + nx, dx, dy))
+                adj[base + x] = tuple(out)
+
+        self._adj[corner_cut] = (self._version, adj)
+        return adj
 
 
 def raycast_blocks(

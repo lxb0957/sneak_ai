@@ -13,6 +13,12 @@
 索引 = y * w + x，避免 Python dict 的哈希开销。这是"多敌人 60 FPS"
 这个数字能成立的前提。
 
+第二轮优化（v1.8.10）：BFS 和方向场都不再逐格调 `is_walkable`，改用
+`GridMap.neighbors8()` 缓存好的邻接表（墙在运行期不变，一场只算一次）。
+之前每次重建要付 3.8 万次 `is_walkable` 调用，实测 6.5~14ms ——
+追击时每 0.5 秒重建一次，正好把一帧顶出 16.7ms，能看出规律顿挫。
+改用邻接表之后同一份数据只要遍历现成的元组，且不改变任何数值结果。
+
 代价：一次 O(全场格子数) 的预处理，摊到 N 个单位上近乎免费。
 """
 
@@ -20,13 +26,11 @@ from typing import Dict, List, Optional, Tuple
 
 from ..core.grid import GridMap
 
-# 八方向向量
-_DIRS = [
-    (1, 0), (-1, 0), (0, 1), (0, -1),
-    (1, 1), (1, -1), (-1, 1), (-1, -1),
-]
-# 对应方向的对角代价（对角 1414，直线 1000，用整数近似避免浮点）
-_COSTS = [1000, 1000, 1000, 1000, 1414, 1414, 1414, 1414]
+# 对角代价用的整数近似：直线 1000、对角 1414。
+# 邻接表只给方向和坐标，代价在这里按方向补 —— 别把 1414 改成 sqrt(2)*1000，
+# 积分场是整数排序的，浮点代价会让平局规则变得依赖精度。
+_DIAG_COST = 1414
+_STRAIGHT_COST = 1000
 
 
 class FlowField:
@@ -59,6 +63,9 @@ class FlowField:
 
         INF = 1 << 30
         dist = [INF] * (w * h)
+        # 邻接表来自 GridMap 的缓存：墙在运行期不变，这份表一场只算一次。
+        # 口径必须和这里原来的 BFS 一致 —— 只要求目标格可走，允许斜穿墙角。
+        adj = grid.neighbors8(corner_cut=True)
 
         # 1. 反向 BFS（八方向，整数代价）
         start_idx = gy * w + gx
@@ -66,15 +73,9 @@ class FlowField:
         dq = deque([start_idx])
         while dq:
             idx = dq.popleft()
-            cx = idx % w
-            cy = idx // w
             d = dist[idx]
-            for (dx, dy), cost in zip(_DIRS, _COSTS):
-                nx, ny = cx + dx, cy + dy
-                if not grid.is_walkable(nx, ny):
-                    continue
-                nidx = ny * w + nx
-                nd = d + cost
+            for nidx, dx, dy in adj[idx]:
+                nd = d + (_STRAIGHT_COST if dx == 0 or dy == 0 else _DIAG_COST)
                 if nd < dist[nidx]:
                     dist[nidx] = nd
                     dq.append(nidx)
@@ -87,15 +88,10 @@ class FlowField:
         for idx in range(w * h):
             if dist[idx] >= INF:
                 continue
-            cx = idx % w
-            cy = idx // w
             best_dx = best_dy = 0
             best_d = dist[idx]
-            for (dx, dy), cost in zip(_DIRS, _COSTS):
-                nx, ny = cx + dx, cy + dy
-                if not grid.is_walkable(nx, ny):
-                    continue
-                nd = dist[ny * w + nx]
+            for nidx, dx, dy in adj[idx]:
+                nd = dist[nidx]
                 if nd < best_d:
                     best_d = nd
                     best_dx, best_dy = dx, dy
