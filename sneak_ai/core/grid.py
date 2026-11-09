@@ -14,6 +14,7 @@
 """
 
 from dataclasses import dataclass, field
+import math
 from typing import Dict, List, Tuple
 
 WALL = 1
@@ -123,6 +124,44 @@ class GridMap:
 
         self._adj[corner_cut] = (self._version, adj)
         return adj
+
+
+def circle_hits_wall(x: float, y: float, r: float, grid: "GridMap",
+                     inset: float = 0.0) -> bool:
+    """圆心 (x, y)、半径 r 的圆是否和墙格相交（圆心到墙格最近点的距离）。
+
+    用"最近点距离"而不是四角包围盒：贴墙但没真碰到时不能被判成碰撞，
+    否则贴着墙走会一卡一卡（早期版本最烦人的 bug 之一）。
+
+    `inset` 是给"恰好贴在角点上"留的容差（从 r² 里减掉）：
+    - 敌人移动传 `1e-6`。圆心正好落在墙格角点时最近点距离为 0，严格比较
+      会把它判成"在墙里"，实体被永久钉死；
+    - 玩家移动传 `0`。这是历史行为，手感逐帧调过，不为"统一"而改。
+
+    **为什么抽到这里**：这段几何原来在 `enemy.py` 和 `player.py` 各写了一份，
+    而且已经悄悄分叉（敌人那份有容差，玩家那份没有）。两份实现跑的是同一张
+    地图、同一个半径语义 —— 一边修了卡角、另一边还在卡，就是"两把尺子"。
+    实现只有一份，口径由参数决定，才不会再分叉。
+
+    候选格按半径取整（`floor(x-r) … floor(x+r)`）而不是固定 3×3：半径 0.3
+    的实体最多只可能碰到 1~2 格宽的一条带，3×3 里有 5 格以上连"最近点距离
+    < r"都不可能满足。逐坐标对拍过（`test_w36`，2.8 万组），结果与 3×3 一致。
+    """
+    x0, x1 = math.floor(x - r), math.floor(x + r)
+    y0, y1 = math.floor(y - r), math.floor(y + r)
+    rr = r * r - inset
+    is_wall = grid.is_wall
+    for tx in range(x0, x1 + 1):
+        for ty in range(y0, y1 + 1):
+            if not is_wall(tx, ty):
+                continue
+            px = max(tx, min(x, tx + 1))
+            py = max(ty, min(y, ty + 1))
+            dx = x - px
+            dy = y - py
+            if dx * dx + dy * dy < rr:
+                return True
+    return False
 
 
 def raycast_blocks(

@@ -12,7 +12,7 @@ import math
 import pygame
 
 from .. import constants as C
-from ..core.grid import GridMap
+from ..core.grid import GridMap, circle_hits_wall
 from ..perception.sound import hearing_range
 
 
@@ -155,16 +155,10 @@ class Player:
 
     @staticmethod
     def _collides(x: float, y: float, r: float, grid: GridMap) -> bool:
-        # 圆 vs 墙格碰撞：用圆心到墙格最近点距离，避免四角包围盒的卡墙角 bug
-        cx, cy = int(x), int(y)
-        for tx in (cx - 1, cx, cx + 1):
-            for ty in (cy - 1, cy, cy + 1):
-                if not grid.is_wall(tx, ty):
-                    continue
-                closest_x = max(tx, min(x, tx + 1))
-                closest_y = max(ty, min(y, ty + 1))
-                dx = x - closest_x
-                dy = y - closest_y
-                if dx * dx + dy * dy < r * r:
-                    return True
-        return False
+        """圆 vs 墙：几何在 `core.grid.circle_hits_wall`（玩家和敌人共用一份）。
+
+        玩家这一侧**不留容差**（`inset=0`）：这是历史行为，手感逐帧调过。
+        注意这和敌人那一侧不一样（敌人留 1e-6 防卡角）—— 差别写在这个参数上，
+        而不是藏在两份复制粘贴的实现里。
+        """
+        return circle_hits_wall(x, y, r, grid, inset=0.0)

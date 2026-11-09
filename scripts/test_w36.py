@@ -7,7 +7,9 @@ v1.8.10 做了四处"只改实现、不改行为"的提速：
 1. `GridMap.neighbors8()`：把"谁能走到谁"缓存成邻接表，流场/A* 不再逐格
    调 `is_walkable`；
 2. `FlowField._build`：改用上面那份邻接表；
-3. `Enemy._collides`：碰撞候选格从固定 3×3 改成"按半径算"；
+3. `circle_hits_wall`：碰撞几何从"玩家 / 敌人各一份"合并成一份，候选格从
+   固定 3×3 改成"按半径算"—— 两份实现早就悄悄分叉了（敌人有 1e-6 容差，
+   玩家没有），容差现在是显式参数 `inset`；
 4. `add_cover`：空地总数只数一次，可达性用 `reachable_count`（不建集合）。
 
 这四处的共同点是：**改错了不会崩、不会报错、不会让任何现有断言变红**，
@@ -18,7 +20,7 @@ v1.8.10 做了四处"只改实现、不改行为"的提速：
 
 - 邻接表 vs 现算的暴力枚举（两种 corner_cut 口径），每个格子比；
 - 流场 vs 旧实现的直接翻译（同一份 BFS 逐行照抄），积分场/方向场逐元素比；
-- 碰撞判定 vs 旧的 3×3 扫描，随机坐标 + 整数/角点边界，12 万次比；
+- 碰撞判定 vs 旧的 3×3 扫描，随机坐标 + 整数/角点边界，**两种容差口径**都比；
 - 可达格数 vs `len(flood_floor(...))`，五关每关比；
 - 缓存的失效：`set_wall` / `set_floor` 之后必须重算，**而且重算结果要对**。
 
@@ -47,6 +49,7 @@ pygame.init()
 from sneak_ai.core import levels as L  # noqa: E402
 from sneak_ai.core.grid import FLOOR, NEI8, WALL, GridMap  # noqa: E402
 from sneak_ai.entity.enemy import Enemy  # noqa: E402
+from sneak_ai.entity.player import Player  # noqa: E402
 from sneak_ai.pathing.flowfield import FlowField  # noqa: E402
 
 
@@ -117,8 +120,8 @@ def _ref_flowfield(grid, goal):
     return (dist, vx, vy)
 
 
-def _ref_collides(x, y, r, grid):
-    """旧版 3×3 扫描。"""
+def _ref_collides(x, y, r, grid, inset=0.0):
+    """旧版 3×3 扫描（`inset` 对应两份历史实现的差别）。"""
     cx, cy = int(x), int(y)
     for tx in (cx - 1, cx, cx + 1):
         for ty in (cy - 1, cy, cy + 1):
@@ -127,7 +130,7 @@ def _ref_collides(x, y, r, grid):
             px = max(tx, min(x, tx + 1))
             py = max(ty, min(y, ty + 1))
             dx, dy = x - px, y - py
-            if dx * dx + dy * dy < r * r - 1e-6:
+            if dx * dx + dy * dy < r * r - inset:
                 return True
     return False
 
@@ -215,7 +218,13 @@ def test_flowfield_matches_reference():
 
 
 def test_collides_matches_reference():
-    """碰撞判定：随机坐标 + 整数/角点边界，逐个对拍。"""
+    """碰撞判定：随机坐标 + 整数/角点边界，**两种容差口径**逐个对拍。
+
+    玩家和敌人共用 `circle_hits_wall`，但 `inset` 不同（玩家 0、敌人 1e-6）。
+    这两个数不是随便给的：敌人那份是"防卡角"的修正，玩家那份是历史手感。
+    合并实现时最怕的就是"顺手统一" —— 统一了就没有卡角修正，或者玩家会
+    突然穿得过以前穿不过的缝。所以两种口径都要钉。
+    """
     n = 0
     for lv in L.LEVELS:
         g = lv.build()
@@ -225,8 +234,10 @@ def test_collides_matches_reference():
             y = rnd.uniform(-1, g.h + 1)
             r = rnd.choice([0.02, 0.1, 0.28, 0.3, 0.35, 0.5, 0.7071, 0.99])
             n += 1
-            assert Enemy._collides(x, y, r, g) == _ref_collides(x, y, r, g), \
-                f"{lv.name} ({x:.4f},{y:.4f}) r={r} 判定不一致"
+            assert Enemy._collides(x, y, r, g) == _ref_collides(x, y, r, g, 1e-6), \
+                f"{lv.name} ({x:.4f},{y:.4f}) r={r} 敌人口径不一致"
+            assert Player._collides(x, y, r, g) == _ref_collides(x, y, r, g, 0.0), \
+                f"{lv.name} ({x:.4f},{y:.4f}) r={r} 玩家口径不一致"
         # 边界：整数坐标、格角、极小偏移 —— 这些才是"差一点就判错"的地方
         for x in range(0, min(g.w, 10)):
             for y in range(0, min(g.h, 10)):
@@ -234,9 +245,12 @@ def test_collides_matches_reference():
                     for ox in (0.0, 1e-9, 0.5, 1 - 1e-9):
                         n += 1
                         assert Enemy._collides(x + ox, y, r, g) == \
-                            _ref_collides(x + ox, y, r, g), \
-                            f"边界不一致 ({x + ox},{y}) r={r}"
-    print(f"[OK] 碰撞判定 {n} 组与旧 3×3 扫描完全一致")
+                            _ref_collides(x + ox, y, r, g, 1e-6), \
+                            f"敌人边界不一致 ({x + ox},{y}) r={r}"
+                        assert Player._collides(x + ox, y, r, g) == \
+                            _ref_collides(x + ox, y, r, g, 0.0), \
+                            f"玩家边界不一致 ({x + ox},{y}) r={r}"
+    print(f"[OK] 碰撞判定 {n} 组 × 两种容差口径，与旧 3×3 扫描完全一致")
 
 
 def test_reachable_count_matches_flood():

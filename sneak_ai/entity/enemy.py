@@ -17,6 +17,7 @@
 import math
 
 from .. import constants as C
+from ..core.grid import circle_hits_wall
 from ..ai.behavior_tree import (
     Action,
     Blackboard,
@@ -873,30 +874,9 @@ class Enemy:
 
     @staticmethod
     def _collides(x: float, y: float, r: float, grid) -> bool:
-        """圆 vs 墙格碰撞：检查圆心周围可能相交的墙格。
+        """圆 vs 墙：几何在 `core.grid.circle_hits_wall`（玩家和敌人共用一份）。
 
-        用圆心到墙格最近点的距离判定（而非四角包围盒），
-        避免"贴墙但未真正碰到"时被误判为碰撞（卡墙角 bug）。
-
-        扫描范围按半径算，不是固定 3×3：半径 0.3 格的实体，圆心在格内
-        任意位置时最多只可能碰到 1~2 格宽的一条带，而 3×3 里有 5 格以上
-        连"最近点距离 < r"都不可能满足 —— 白跑。这个函数每帧被调用 78 次
-        （每只敌人每步最多 4 次），固定 9 格改成 1~4 格是这一帧里最便宜的优化。
-        判定结果逐个坐标对拍过，与原 3×3 完全一致。
+        这里只固定"敌人这一侧的口径"：留 1e-6 容差，因为圆心恰好贴在墙格
+        角点时最近点距离为 0，严格比较会判成"在墙里"、实体被永久钉死。
         """
-        x0, x1 = math.floor(x - r), math.floor(x + r)
-        y0, y1 = math.floor(y - r), math.floor(y + r)
-        rr = r * r - 1e-6
-        for tx in range(x0, x1 + 1):
-            for ty in range(y0, y1 + 1):
-                if not grid.is_wall(tx, ty):
-                    continue
-                closest_x = max(tx, min(x, tx + 1))
-                closest_y = max(ty, min(y, ty + 1))
-                dx = x - closest_x
-                dy = y - closest_y
-                # 留 1e-6 容差：圆心恰好贴在墙格角点时距离为 0，
-                # 严格比较会把它判成"在墙里"，导致实体被永久钉死。
-                if dx * dx + dy * dy < rr:
-                    return True
-        return False
+        return circle_hits_wall(x, y, r, grid, inset=1e-6)

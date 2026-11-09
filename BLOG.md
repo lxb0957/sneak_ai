@@ -2716,7 +2716,7 @@ regular 和 bold 都对得上），四档窗口的布局审计和 README 截图�
 
 - `GridMap.neighbors8(corner_cut)`：整张图的邻接表算一次，随 `set_wall/set_floor` 递增版本号失效。流场用 `corner_cut=True`（只要求目标格可走，这是它一直以来的口径），A*/机器人用 `False`（禁止斜穿墙角）。
 - `FlowField._build` 直接遍历邻接表，不做任何墙判定。
-- `Enemy._collides` 的候选格从固定 3×3 改成 `floor(x-r) … floor(x+r)`：半径 0.3 时只有 1~2 格宽。
+- `Enemy._collides` 的候选格从固定 3×3 改成 `floor(x-r) … floor(x+r)`：半径 0.3 时只有 1~2 格宽。顺手发现这段几何在 `player.py` 里还有一份复制粘贴的版本，而且**两份已经分叉了** —— 敌人那份有 1e-6 容差（防卡角），玩家那份没有。同一张地图、同一个半径语义，一边修了卡角另一边还在卡。合并成 `circle_hits_wall(x, y, r, grid, inset)`，容差变成显式参数：敌人传 1e-6，玩家传 0（历史手感，不为统一而改）。
 - `add_cover` 的空地总数只数一次、随放/撤增减；可达性换成计数版 BFS（不建 `(x,y)` 元组集合）。
 
 ### 结果（新旧代码交替跑三轮，取中位）
