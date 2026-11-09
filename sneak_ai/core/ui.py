@@ -5,7 +5,31 @@
 原实现每帧在 HUD 里调 6 次、每个敌人标签又调 1 次（18 个敌人 = 24 次/帧），
 在 Python 里这是实打实的开销。字体只用缓存，文本只在"内容变化时"重渲染，
 是本轮性能优化里最直接的一刀。
+
+## 字体回退链（v1.8.10 补的账）
+
+以前这里写死了三个 Windows 字体名：`microsoftyahei / msyh / simhei`。
+在 Windows 上没问题，换个系统就是**全屏方块** —— pygame 找不到名字会退回
+默认位图字体，那个字体没有中文字形，于是所有中文都渲染成豆腐块。
+而 CI 的 `test-suite.yml` 里早就有这么一条注释："装了 Noto CJK，
+让字体回退链在 CI 上也落到一个中文字体上" —— **可代码里根本没有回退链**，
+注释描述的是一个不存在的机制。这类"注释比代码乐观"的坑这个项目踩过好几次
+（黑灯 14 秒 vs 10 秒、哨位 14 个 vs 11 个），所以这回直接把链补上。
+
+修法是**只把候选名单变长**，调用方式不动：`SysFont` 本来就按顺序找第一个
+存在的名字，所以 Windows 上仍然命中 "microsoftyahei"、拿到同一个 Microsoft YaHei
+字面（含真 Bold），**渲染逐像素不变**，四档窗口的布局审计和 README 截图都不用动。
+（试过改成 `Font(match_font(...))` 按文件路径加载：Windows 上会解析到
+`msyhl.ttc` = 雅黑 Light，粗体只能合成，20 号字宽 141→153，全站排版跟着变。
+为一个跨平台补丁去改全站字体，代价远大于收益。）
+
+`font_file()` 是这条链的**探针**：`match_font` 找不到返回 None（不像 SysFont
+那样静默退回默认字体），所以它能回答"这台机器到底有没有中文字体"。
+CI 和 `test_w35` 用它断言 —— 否则字体缺失的表现是"中文变方块"，
+而方块不会让任何测试变红。
 """
+
+import sys
 
 import pygame
 
@@ -13,13 +37,61 @@ from .. import constants as C
 
 _FONT_CACHE = {}
 
+# 按平台排的候选名：全部小写、去空格（SysFont 内部就是这么比的）。
+# 顺序有讲究：Windows 的放最前，保证 Windows 上的命中结果和历史版本一致。
+_CJK_FONTS = (
+    # Windows
+    "microsoftyahei", "msyh", "simhei", "simsun", "dengxian",
+    # macOS
+    "pingfangsc", "hiraginosansgb", "stheiti", "heitisc",
+    # Linux（Noto 是 Debian/Ubuntu 的默认中文包，文泉驿是老发行版的）
+    "notosanscjksc", "notosanscjk", "notosanssc", "sourcehansanssc",
+    "wenquanyimicrohei", "wqymicrohei", "wenquanyizenhei", "droidsansfallback",
+    # 兜底：老 Windows / 部分精简系统上唯一带中日韩字形的字体
+    "arialunicodems",
+)
+
+_font_file = None
+_font_resolved = False
+
+
+def font_file():
+    """探针：这台机器上有哪个中文字体文件。返回 None = 一个都没有。
+
+    只在测试和诊断里用，渲染路径不依赖它的返回值 —— 渲染走的是
+    `SysFont(_CJK_FONTS, ...)`，行为和老版本完全一致。
+    """
+    global _font_file, _font_resolved
+    if _font_resolved:
+        return _font_file
+    _font_resolved = True
+
+    path = pygame.font.match_font(",".join(_CJK_FONTS))
+    if path is None:
+        # 名字对不上时（各发行版写法不一："Noto Sans CJK SC" / "NotoSansCJKsc"），
+        # 再按关键字在已安装列表里猜一遍。猜错了也只是拿不到路径，
+        # 渲染那边 SysFont 自己还会再找一遍。
+        for name in pygame.font.get_fonts():
+            if any(k in name for k in ("cjk", "hei", "song", "yahei",
+                                       "pingfang", "sourcehansans", "wenquanyi")):
+                path = pygame.font.match_font(name)
+                if path:
+                    break
+    _font_file = path
+    return path
+
 
 def font(size: int, bold: bool = False) -> pygame.font.Font:
     key = (size, bold)
     f = _FONT_CACHE.get(key)
     if f is None:
-        f = pygame.font.SysFont(["microsoftyahei", "msyh", "simhei"], size, bold=bold)
+        f = pygame.font.SysFont(list(_CJK_FONTS), size, bold=bold)
         _FONT_CACHE[key] = f
+        if font_file() is None and len(_FONT_CACHE) == 1:
+            # 只在**第一次**建字体时喊一声：每帧都喊等于没喊。
+            print(f"[字体] 没找到中文字体（试过 {len(_CJK_FONTS)} 个名字），"
+                  f"中文会显示成方块。Windows 自带雅黑、macOS 自带苹方，"
+                  f"Linux 请装 fonts-noto-cjk。", file=sys.stderr)
     return f
 
 

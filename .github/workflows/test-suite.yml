@@ -52,10 +52,12 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
 
-      # 字体是唯一的系统级依赖：HUD 里写的是微软雅黑/黑体，
+      # 字体是唯一的系统级依赖：HUD 里写的是微软雅黑/黑体（跨平台候选链见
+      # `sneak_ai/core/ui.py` 与 docs/KNOWN_ISSUES.md 的 B1 条），
       # 两个都不在 GitHub 的 runner 上，缺了之后 pygame 会退回默认字体 ——
-      # 布局审计照样能跑（它读的是真实渲染的矩形），但截图和 README 图会完全不同。
-      # 所以这里显式装 Noto CJK，让字体回退链在 CI 上也落到一个中文字体上。
+      # 布局审计照样能跑（它读的是真实渲染的矩形），但截图和 README 图会完全不同，
+      # 而且中文会变成"豆腐块"（方块不会让任何断言失败，所以 test_w35 专门验字形）。
+      # 所以这里显式装 Noto CJK，让候选链在 CI 上也真的落到一个中文字体上。
       - name: 安装中文字体
         run: |
           sudo apt-get update
@@ -87,8 +89,8 @@ jobs:
                    test_w8 test_w10 test_w11 test_w12 test_w14 test_w15 test_w16 \
                    test_w17 test_w18 test_w19 test_w20 test_w21 test_w22 \
                    test_w23 test_w24 test_w25 test_w26 test_w27 test_w28 \
-                   test_w29 test_w30 test_w31 test_w32 test_w33 \
-                   test_robustness; do
+                   test_w29 test_w30 test_w31 test_w32 test_w33 test_w34 \
+                   test_w35 test_robustness; do
             echo "===== $t ====="
             if ! python scripts/$t.py; then
               fail="$fail $t"
@@ -98,7 +100,7 @@ jobs:
             echo "::error::以下脚本未通过：$fail"
             exit 1
           fi
-          echo "全部 31 个脚本通过"
+          echo "全部 33 个脚本通过"
 
       # 下面这三项是"审计"而不是"单测"：它们不检查函数对不对，
       # 检查的是"画出来、算出来之后还有没有自相矛盾的地方"。

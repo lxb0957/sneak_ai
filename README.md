@@ -11,6 +11,10 @@
 > **核心定位**：不用任何现成 AI 库（无 stable-baselines3、无现成行为树/寻路库），感知、决策、寻路、协同全部从零实现。每一个模块都能被面试官往深处追问。
 
 > **不想装 Python？** [下载 Windows 免安装版](https://github.com/lxb0957/sneak_ai/releases/latest)（28 MB 单文件，双击即玩，存档 `records.json` 就写在 exe 旁边）。
+> 用 macOS / Linux？**源码可以在三个平台跑**（`pip install -r requirements.txt && python launch.py`，中文字体走跨平台回退链），
+> 但二进制只发 Windows —— 没签名的 mac 包双击会被 Gatekeeper 拦下，不如不发。
+> 这条和另外两笔账（第 4 关的 25%、窄段两侧没有掩体）都写在 [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) 里，
+> **每一条都附了"怎么复查"**：这份项目的"已知问题"不是传闻，是查过之后认下来的。
 
 ## 演示
 
@@ -284,7 +288,9 @@ Selector
 > **"晚 2.7 秒被发现"这件事真的做到了，胜率一点没动** —— 这条否证比任何解释都有用：
 > 那 75% 不来自"被看见得太早"，而来自"被看见之后无路可走"。
 > 两个旋钮的默认值一格没动（`test_w34` 钉住加参数之前的基线逐字段相同），
-> 所以上面所有历史数字仍然可比。要真动这一关，得动"被看见之后还有什么可做"（BLOG 第 46、47 章）。
+> 所以上面所有历史数字仍然可比。要真动这一关，得动"被看见之后还有什么可做"。
+> **这一条已经结账，不再是待办**：结论、证据、复查命令、以及"非要改要付什么"，
+> 都写在 [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) 的 A1（BLOG 第 46、47、48 章）。
 > 第 1 关那 7.3 个点又用**同种子配对**查了一遍（`scripts/ab_level.py`，同一批 96 局跑两遍）：
 > 关掉新逻辑 73/96 = 76.0%、打开 65/96 = 67.7%，翻盘 **17:9**（约 2:1 朝"变难"的方向），
 > 但 McNemar 精确检验 **p = 0.17** —— 方向一致、强度不够。这一条只能记成
@@ -1022,6 +1028,7 @@ python scripts/test_w31.py              # 难度表读数：最短路线 / 最�
 python scripts/test_w32.py              # 辅助模式：只削敌人 / 偏好合并 / 不写纪录 / 三处可见
 python scripts/test_w33.py              # 新手引导：每关点名新动词 / 按条件触发 / 只说一次
 python scripts/test_w34.py              # 尺子旋钮：默认值 = 历史基线 / look·hold 真的接着线 / McNemar 边界
+python scripts/test_w35.py              # 结账：字体真能画中文（潜≠验）/ 五关地形哈希 / 掩体不落进窄段墙行
 python scripts/audit_ui.py              # UI 体检：五关 × 四档窗口，记录真实落点并两两求交
 python scripts/score_table.py           # 计分体检：四种玩法各跑一局，逐局和设计公式对账
 python scripts/test_robustness.py       # 健壮性：崩溃留痕 / 存档容错 / 启动降级
