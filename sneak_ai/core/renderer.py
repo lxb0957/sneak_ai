@@ -15,14 +15,20 @@ import random
 import pygame
 
 from .. import constants as C
+from .grid import dda_hit_t
 from .sprites import SpriteBank
 
 
 def vision_polygon(enemy, grid, cam, steps: int = 20) -> list:
-    """算出一个敌人视野锥的屏幕多边形（逐角度 DDA，撞墙即截断）。
+    """算出一个敌人视野锥的屏幕多边形（逐角度求交，撞墙即截断）。
 
     玩法层（淡显锥体）和 F1 调试层共用这一份几何，
     避免"调试里看得到、实际看不见"这种自相矛盾的显示。
+
+    更重要的是：这里和感知层的遮挡判定用的是**同一个** `dda_hit_t`。
+    画出来的锥体边界，就是敌人真正能看见的最远处 —— 不多一格也不少一格。
+    早先这里自己写了一份 0.25 格步长的采样，和感知层的 0.5 格采样各漏各的，
+    结果是"锥体没盖住你，敌人却发现了你"，而且从画面上找不到理由。
     """
     view = enemy.view_range()
     if view <= 0:
@@ -34,13 +40,9 @@ def vision_polygon(enemy, grid, cam, steps: int = 20) -> list:
     for i in range(steps + 1):
         a = enemy.facing - fov / 2 + fov * i / steps
         ca, sa = math.cos(a), math.sin(a)
-        r = 0.0
-        while r < view:
-            nx, ny = enemy.x + ca * r, enemy.y + sa * r
-            if grid.is_wall(int(nx), int(ny)):
-                break
-            r += 0.25
-        r = min(r, view)
+        r = dda_hit_t(grid, enemy.x, enemy.y, ca, sa, view)
+        if r is None:
+            r = view
         pts.append((ex + ca * r * ts, ey + sa * r * ts))
     return pts
 
