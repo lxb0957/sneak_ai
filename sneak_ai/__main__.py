@@ -717,7 +717,11 @@ class Game:
         self.cam.follow(self.player.x, self.player.y, dt)
         # 地图预渲染图铺满整个视口，不需要先 fill 背景（省一次全屏填充）
         self.mapview.draw(screen, self.cam)
-        self._draw_goals()
+        # 目标点周围的光点：一帧推进+绘制一次。放在这里而不是 draw_goal 里面，
+        # 因为 draw_goal 会被每个终端各调一次 —— 详见 draw_goal_particles。
+        # 只有这一帧真的画了目标才推进：结算页不该让残留的光点继续飘。
+        if self._draw_goals():
+            self.px.draw_goal_particles(screen)
         # 调试视图里已经有精确视野锥了，就别再叠一层淡显的（会糊成一片）
         if not self.debug.enabled:
             self.px.draw_vision_cones(screen, self.cam, self.world)
@@ -821,8 +825,14 @@ class Game:
         return 0.0
 
     # ============ 目标点 ============
-    def _draw_goals(self) -> None:
+    def _draw_goals(self) -> bool:
+        """画数据节点 / 撤离点，返回"这一帧有没有画出目标"。
+
+        返回值给光点用：没有目标在画面上时，那批光点就该冻住（结算页、
+        过场页都不该有东西在飘），而不是继续推进直到寿命耗尽。
+        """
         pulse = self._pulse()
+        drew = False
         # 数据节点：仅潜入阶段显示。坐标随关卡走（world.terminals）。
         # 已经拿到的节点不再画 —— 玩家需要一眼看出"还剩几个、在哪"，
         # 而不是对着两个一模一样的方块猜哪个还没摸。
@@ -830,12 +840,15 @@ class Game:
             for i, (tx, ty) in self.world.remaining():
                 sx, sy = self.cam.world_to_screen(tx, ty)
                 self.px.draw_goal(self.screen, int(sx), int(sy), "terminal", pulse)
+                drew = True
         # 撤离点：逃脱阶段显示（拿数据后高亮）
         if self.world.state == C.STATE_EXFILTRATE:
             tx, ty = self.world.exfil
             sx, sy = self.cam.world_to_screen(tx, ty)
             self.px.draw_goal(self.screen, int(sx), int(sy), "exit", pulse,
                               has_data=self.world.has_data)
+            drew = True
+        return drew
 
     # ============ 角色 ============
     def _draw_player(self) -> None:

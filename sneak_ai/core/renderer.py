@@ -56,6 +56,7 @@ class PixelRenderer:
         self._rng = random.Random(7)
         # 特效图层：视野锥共用一张，每帧只清空一次（避免逐个敌人建 Surface）
         self._fx = None
+        self._dot_cache = {}    # (r,g,b,a) → 4×4 贴图，见 draw_goal_particles
         self._vignette = None
         self._dark = None   # 黑灯遮罩（与视锥层分开：一张常驻、一张每帧覆盖）
         self._icon_cache = {}
@@ -462,15 +463,32 @@ class PixelRenderer:
         玩家看到墙后一片黄就会以为"那边被盯着"，实际那里是安全的。
         误导性的信息比没有信息更糟 —— 现在逐角度做 DDA 采样，
         射线碰到墙就停在那儿，锥体轮廓和真实遮挡一致。
+
+        为什么要包围盒：这一层原来是"全屏清零 → 画 → 整屏加法叠加"。
+        实测单帧在锥体上花 0.95ms，其中 **整屏 blit 0.40ms 与锥体数量完全
+        无关** —— 哪怕画面里一个锥体都没有，这笔钱也照付（第 1 关开局有
+        大量这种帧）。改成只贴所有锥体的联合包围盒之后，这块成本随锥体
+        实际占屏面积走：第 4 关 6.7% 屏、第 3 关 15.3% 屏。一个锥体都没有
+        的帧直接整段跳过。
+
+        两个"看起来更快但会让画面变样"的写法，实测过、都没采用：
+        - 把多边形坐标平移到包围盒局部再画：`pygame.draw.polygon` 的栅格化
+          对平移**不是**不变的，同样是那 4 个顶点，局部坐标画出来少了
+          19062 个像素（顶点附近整片没填）。所以坐标保持全局，只裁 blit。
+        - 用 `fill(color, rect)` 只清包围盒：0.154ms，反而比全屏
+          `fill()` 的 0.115ms 慢 —— 全屏是连续内存 memset，按行 stride
+          清反而要逐行走。所以清零保持全屏，只砍 blit。
         """
         if self._fx is None:
             self._fx = pygame.Surface((C.WINDOW_W, C.WINDOW_H), pygame.SRCALPHA)
         fx = self._fx
-        fx.fill((0, 0, 0, 0))
 
         ts = C.TILE_SIZE
         grid = world.grid
         px0, py0 = world.player.x, world.player.y
+        items = []
+        minx = miny = 1e18
+        maxx = maxy = -1e18
         for e in world.enemies:
             # 只画"玩家附近"的视野锥：远处的锥体贴图除了刷屏没有信息量
             if (e.x - px0) ** 2 + (e.y - py0) ** 2 > 15.0 ** 2:
@@ -494,13 +512,40 @@ class PixelRenderer:
             edge = (int(base[0] * k * 2.4), int(base[1] * k * 2.4),
                     int(base[2] * k * 2.4), 255)
             pts = vision_polygon(e, grid, cam)
-            if len(pts) >= 3:
-                pygame.draw.polygon(fx, fill, pts)
-                # 描一道更亮的边：多个锥体叠在一起时才分得清"谁的视野"
-                pygame.draw.polygon(fx, edge, pts, 1)
+            if len(pts) < 3:
+                continue
+            items.append((pts, fill, edge))
+            for vx, vy in pts:
+                if vx < minx:
+                    minx = vx
+                if vx > maxx:
+                    maxx = vx
+                if vy < miny:
+                    miny = vy
+                if vy > maxy:
+                    maxy = vy
 
+        # 画面上一个锥体都没有：清零和叠加一起省掉（这 0.5ms 是白付的）
+        if not items:
+            return
+
+        fx.fill((0, 0, 0, 0))
+        for pts, fill, edge in items:
+            pygame.draw.polygon(fx, fill, pts)
+            # 描一道更亮的边：多个锥体叠在一起时才分得清"谁的视野"
+            pygame.draw.polygon(fx, edge, pts, 1)
+
+        # 只贴包围盒：盒外是上一帧的残留，`area` 保证它不会被拷到屏幕上
+        x0 = max(0, int(minx) - 2)
+        y0 = max(0, int(miny) - 2)
+        x1 = min(C.WINDOW_W, int(maxx) + 3)
+        y1 = min(C.WINDOW_H, int(maxy) + 3)
+        if x1 <= x0 or y1 <= y0:
+            return
         # 加法叠加：锥体重叠处自然更亮，和真实光照的直觉一致
-        screen.blit(fx, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
+        screen.blit(fx, (x0, y0),
+                    area=pygame.Rect(x0, y0, x1 - x0, y1 - y0),
+                    special_flags=pygame.BLEND_RGBA_ADD)
 
     # ============ 头顶状态图标 ============
     def draw_status_icon(self, screen, sx, sy, icon: str, t: float) -> None:
@@ -630,13 +675,13 @@ class PixelRenderer:
 
     # ============ 目标点绘制 ============
     def draw_goal(self, screen, cx, cy, kind, pulse, has_data=False):
-        """画数据终端 / 撤离点：发光底座 + 图标 + 漂浮粒子。
+        """画数据终端 / 撤离点：发光底座 + 图标 + 撒一粒漂浮光点。
 
         kind: "terminal"（数据终端）或 "exit"（撤离点）
         pulse: 0~1 的脉动相位（由时间驱动）
-        """
-        glow = int(120 + 80 * pulse)
 
+        光点只管**撒**，推进和绘制交给 `draw_goal_particles()` —— 见那里的说明。
+        """
         # 发光底座（径向渐变用多层圆模拟）
         base_colors = (
             ((80, 220, 160), (30, 140, 100)) if kind == "terminal"
@@ -667,9 +712,8 @@ class PixelRenderer:
         if has_data and kind == "exit":
             pygame.draw.circle(screen, (255, 255, 255), (cx, cy), 24, 2)
 
-        # 生成/更新漂浮粒子
+        # 生成漂浮粒子（推进与绘制由 draw_goal_particles 统一做）
         self._spawn_particle(cx, cy, base_colors[0])
-        self._update_particles(screen)
 
     def _spawn_particle(self, cx, cy, color):
         if len(self._particles) < 120:
@@ -684,19 +728,39 @@ class PixelRenderer:
                 "color": color,
             })
 
-    def _update_particles(self, screen):
+    def draw_goal_particles(self, screen):
+        """推进并绘制目标点周围的漂浮光点 —— **一帧只能调一次**。
+
+        为什么必须一帧一次：这段原来是在 `draw_goal()` 里调的，而
+        `draw_goal()` 会为**每一个**未取走的数据终端调一次。第 3 关有两个
+        终端，于是同一批光点每帧被推进两次、绘制两次：飘移速度翻倍、寿命
+        减半；而且玩家取走一个终端之后，同屏剩下的光点会立刻慢下来一半。
+
+        同一款特效的播放速度不该取决于画面上还剩几个目标 —— 这不是调参
+        能救的，是调用位置错了。
+        """
+        dt = 1 / 60.0
         alive = []
+        # 光点贴图按 (颜色, alpha) 缓存：alpha 只有 0~180 共 181 档、颜色只有
+        # 两种，全部缓存下来也就几百张 4×4 的小图。原来是每帧每个光点建一张
+        # 新 Surface 再画个圆 —— 同屏 120 个光点时，光这块每帧要花 0.3ms，
+        # 而且每张都是一次分配。
+        cache = self._dot_cache
         for p in self._particles:
-            p["age"] += 1 / 60.0
+            p["age"] += dt
             if p["age"] >= p["life"]:
                 continue
-            p["x"] += p["vx"] * (1 / 60.0)
-            p["y"] += p["vy"] * (1 / 60.0)
-            p["vy"] -= 3 * (1 / 60.0)  # 轻微上浮
+            p["x"] += p["vx"] * dt
+            p["y"] += p["vy"] * dt
+            p["vy"] -= 3 * dt  # 轻微上浮
             a = max(0, int(180 * (1 - p["age"] / p["life"])))
-            r = 2
-            surf = pygame.Surface((r * 2, r * 2), pygame.SRCALPHA)
-            pygame.draw.circle(surf, (*p["color"], a), (r, r), r)
-            screen.blit(surf, (p["x"] - r, p["y"] - r))
+            col = p["color"]
+            key = (col[0], col[1], col[2], a)
+            dot = cache.get(key)
+            if dot is None:
+                dot = pygame.Surface((4, 4), pygame.SRCALPHA)
+                pygame.draw.circle(dot, key, (2, 2), 2)
+                cache[key] = dot
+            screen.blit(dot, (p["x"] - 2, p["y"] - 2))
             alive.append(p)
         self._particles = alive

@@ -90,7 +90,7 @@ jobs:
                    test_w17 test_w18 test_w19 test_w20 test_w21 test_w22 \
                    test_w23 test_w24 test_w25 test_w26 test_w27 test_w28 \
                    test_w29 test_w30 test_w31 test_w32 test_w33 test_w34 \
-                   test_w35 test_w36 test_w37 test_robustness; do
+                   test_w35 test_w36 test_w37 test_w38 test_robustness; do
             echo "===== $t ====="
             if ! python scripts/$t.py; then
               fail="$fail $t"
@@ -100,7 +100,7 @@ jobs:
             echo "::error::以下脚本未通过：$fail"
             exit 1
           fi
-          echo "全部 35 个脚本通过"
+          echo "全部 36 个脚本通过"
 
       # 下面这三项是"审计"而不是"单测"：它们不检查函数对不对，
       # 检查的是"画出来、算出来之后还有没有自相矛盾的地方"。

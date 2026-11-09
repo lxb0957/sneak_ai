@@ -122,12 +122,30 @@ class TextCache:
         return surf
 
 
+_PANEL_CACHE = {}
+_BAR_CACHE = {}
+
+
 def draw_panel(screen, rect, alpha: int = 190, border: int = 1) -> None:
-    """半透明圆角面板：HUD 的可读性基础（不让文字直接压在花花绿绿的地图上）。"""
-    surf = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
-    pygame.draw.rect(surf, (*C.COL_HUD_PANEL, alpha), surf.get_rect(), border_radius=8)
-    pygame.draw.rect(surf, (*C.COL_HUD_LINE, 220), surf.get_rect(), width=border,
-                     border_radius=8)
+    """半透明圆角面板：HUD 的可读性基础（不让文字直接压在花花绿绿的地图上）。
+
+    面板的内容**只由尺寸和透明度决定**，跟它画在屏幕哪个位置无关 ——
+    所以整张成品可以缓存，每帧只剩一次 blit。HUD 每帧要画 6 块面板，
+    原来是每块都新建 Surface + 画两个圆角矩形。
+    """
+    key = (rect.width, rect.height, alpha, border)
+    surf = _PANEL_CACHE.get(key)
+    if surf is None:
+        # 面板尺寸实际只有十来种（HUD 六块 + 小地图 + 复盘行）。留个上限
+        # 只是防将来有人拿动态尺寸调它，把缓存撑成内存泄漏。
+        if len(_PANEL_CACHE) > 64:
+            _PANEL_CACHE.clear()
+        surf = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+        local = surf.get_rect()
+        pygame.draw.rect(surf, (*C.COL_HUD_PANEL, alpha), local, border_radius=8)
+        pygame.draw.rect(surf, (*C.COL_HUD_LINE, 220), local, width=border,
+                         border_radius=8)
+        _PANEL_CACHE[key] = surf
     screen.blit(surf, rect.topleft)
 
 
@@ -138,8 +156,16 @@ def draw_bar(screen, rect, ratio: float, color, bg=(40, 46, 56), radius: int = 3
     的话，这条 12px 的条子对 UI 重叠审计是**不可见的** —— 审计只能看见
     blit 的落点，看不见直接绘制到画布上的图元。之前"暴露度条压住巡逻状态行"
     就是这么漏过去的。
+
+    这块面每帧都会变（ratio 在动），所以不能缓存成品；但尺寸是固定的，
+    复用同一张、清空重画即可 —— 省掉的是每帧一次 Surface 分配。
     """
-    surf = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+    key = (rect.width, rect.height, radius)
+    surf = _BAR_CACHE.get(key)
+    if surf is None:
+        surf = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+        _BAR_CACHE[key] = surf
+    surf.fill((0, 0, 0, 0))
     local = surf.get_rect()
     pygame.draw.rect(surf, bg, local, border_radius=radius)
     r = max(0.0, min(1.0, ratio))
