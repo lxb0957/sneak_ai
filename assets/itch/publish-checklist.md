@@ -21,7 +21,7 @@ itch.io → 右上角头像 → **Upload new project**
 **Uploads → Upload files**，选：
 
 ```
-C:\Users\刘欣标\WorkBuddy\小游戏\sneak_ai\dist\StealthProtocol-v1.8.11-win64.exe
+C:\Users\刘欣标\WorkBuddy\小游戏\sneak_ai\dist\StealthProtocol-v1.8.13-win64.exe
 ```
 
 勾上 **This file will be uploaded for Windows**。
@@ -52,7 +52,7 @@ C:\Users\刘欣标\WorkBuddy\小游戏\sneak_ai\dist\StealthProtocol-v1.8.11-win
 | **Genre** | `Action` + `Strategy` |
 | **Tags**（最多 10 个，挑最容易被搜到的） | `stealth` `pixel-art` `top-down` `artificial-intelligence` `procedural-generation` `singleplayer` `difficult` `python` `tactical` `robots` |
 | **Made with** | `Python`（itch 有 pygame 选项的话选 pygame） |
-| **Languages** | `English`、`Chinese`（界面是中文，页面说明有英文） |
+| **Languages** | `English`、`Chinese`（界面双语：菜单按 **L** 切换，中文默认） |
 | **Input** | Keyboard + Mouse |
 
 ## 五、正文

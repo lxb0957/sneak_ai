@@ -1,6 +1,6 @@
 # Devlog #1 — A bot decides how hard my levels are
 
-*Posted with the v1.8.11 build. ~5 min read. Code: [github.com/lxb0957/sneak_ai](https://github.com/lxb0957/sneak_ai)*
+*Posted with the v1.8.13 build. ~5 min read. Code: [github.com/lxb0957/sneak_ai](https://github.com/lxb0957/sneak_ai)*
 
 Every difficulty number on this page was produced by a bot, not by me playing.
 

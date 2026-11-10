@@ -758,6 +758,11 @@ class Game:
 
         # 全图盖在 HUD 之上、结算页之下：它是"摊开地图看一眼"，不是游戏状态
         if self.show_map and self.world.state not in (C.STATE_VICTORY, C.STATE_DEFEAT):
+            # 全屏先压暗一层：地图卡片只占中间一块，不压暗的话四周透出的
+            # 游戏画面（尤其巡逻中的哨兵）会像"地图上画错了东西"。
+            dim = pygame.Surface((C.WINDOW_W, C.WINDOW_H), pygame.SRCALPHA)
+            dim.fill((0, 0, 0, 170))
+            screen.blit(dim, (0, 0))
             self.fullmap.draw(screen, self.world, self.cam)
 
         # 过关过场优先于结算页：多关模式下，"一关打完"不是"一局打完"，

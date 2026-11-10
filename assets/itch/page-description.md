@@ -40,7 +40,7 @@ That log is not a debug printout added afterwards. It is what the behavior tree 
 
 Windows 64-bit. A single 28 MB `.exe` — no installer, no Python, no dependencies. Double-click and play. Your records are written to `records.json` next to the executable.
 
-To check it runs on your machine first: `StealthProtocol-v1.8.11-win64.exe --selfcheck`
+To check it runs on your machine first: `StealthProtocol-v1.8.13-win64.exe --selfcheck`
 
 ## Source
 
