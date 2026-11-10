@@ -195,8 +195,14 @@ class HUD:
             color = C.COL_SUSPECT
         else:
             color = C.COL_DANGER
-        screen.blit(self.tc.get("stam_label", "体力", 16, C.COL_TEXT), (26, C.WINDOW_H - 56))
-        draw_bar(screen, pygame.Rect(76, C.WINDOW_H - 53, 152, 12), ratio, color)
+        label = self.tc.get("stam_label", "体力", 16, C.COL_TEXT)
+        screen.blit(label, (26, C.WINDOW_H - 56))
+        # 进度条起点跟着标签宽度走，**但下限锁死在 76**：
+        # 中文"体力"两字宽 32，算出来是 68 —— 那样中文界面会整体左移 8px，
+        # 逐像素对拍立刻红。英文 "Stamina" 宽 58，才真的需要往右让。
+        bar_x = max(76, 26 + label.get_width() + 10)
+        bar_w = min(152, box.right - 16 - bar_x)
+        draw_bar(screen, pygame.Rect(bar_x, C.WINDOW_H - 53, bar_w, 12), ratio, color)
         if player.sprinting:
             # 13px + y-32：16px 标签占 H-56~H-34，13px 行高 18，
             # H-32+18 = H-14，稳稳收在面板底边 H-12 之内。
@@ -220,10 +226,16 @@ class HUD:
         draw_panel(screen, box, alpha=170)
         left = player.ammo
         color = C.COL_TEXT if left > 0 else C.COL_DANGER
-        screen.blit(self.tc.get(f"ammo_label_{left > 0}", "弹药" if left else "空仓",
-                                17, color), (266, C.WINDOW_H - 42))
+        label = self.tc.get(f"ammo_label_{left > 0}", "弹药" if left else "空仓",
+                            17, color)
+        screen.blit(label, (266, C.WINDOW_H - 42))
+        # 同上：下限 320 保住中文版面，"EMPTY" 这种长标签才把子弹往右推。
+        first = max(320, 266 + label.get_width() + 8)
+        step = 11
+        if first + (slots - 1) * step + 8 > box.right - 8:
+            step = max(8, (box.right - 8 - first - 8) // max(1, slots - 1))
         for i in range(slots):
-            cx = 320 + i * 11
+            cx = first + i * step
             cy = C.WINDOW_H - 37
             rect = pygame.Rect(cx, cy - 7, 5, 15)
             if i < left:
@@ -246,12 +258,18 @@ class HUD:
         left = player.stones
         label = "投石" if left > 0 else "用尽"
         color = C.COL_TEXT if left > 0 else C.COL_DANGER
-        screen.blit(self.tc.get(f"stone_label_{left > 0}", label, 17, color),
-                    (426, C.WINDOW_H - 46))
+        label_surf = self.tc.get(f"stone_label_{left > 0}", label, 17, color)
+        screen.blit(label_surf, (426, C.WINDOW_H - 46))
         # 圆点起点从 468 改到 482：满值 5 颗时第一个圆点左缘正好贴住"投石"
-        # 标签（468-6=462 = 标签右缘），中间至少留 12px 空隙
+        # 标签（468-6=462 = 标签右缘），中间至少留 12px 空隙。
+        # 英文 "Stones" 比"投石"宽 20 多像素，起点按标签宽度算，下限仍是 482；
+        # 放不下就把间距从 20 收到 18，不能让它顶出面板右沿（588）。
+        first = max(482, 426 + label_surf.get_width() + 8)
+        step = 20
+        if first + (slots - 1) * step + 6 > box.right - 8:
+            step = max(14, (box.right - 8 - first - 6) // max(1, slots - 1))
         for i in range(slots):
-            cx = 482 + i * 20
+            cx = first + i * step
             cy = C.WINDOW_H - 37
             if i < left:
                 pygame.draw.circle(screen, (196, 188, 170), (cx, cy), 6)

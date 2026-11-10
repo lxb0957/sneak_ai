@@ -64,6 +64,11 @@ def load_assist() -> bool:
     return _load().get("assist") is True
 
 
+def load_lang() -> str:
+    """读界面语言。只认 "en"，其余一律当中文 —— 坏文件不会把界面变成英文。"""
+    return "en" if _load().get("lang") == "en" else "zh"
+
+
 def load_taught() -> set:
     """读"已经说过的引导提示"。只认字符串列表，坏数据当没说过。"""
     raw = _load().get("taught")
@@ -80,7 +85,7 @@ def mark_taught(key: str) -> None:
 
 
 def save(muted: bool = None, *, assist: bool = None,
-         taught=None) -> None:
+         taught=None, lang: str = None) -> None:
     """写偏好，**按键合并**，不是整份覆盖。
 
     为什么必须合并：这个文件里已经有不止一个键了。整份覆盖会让"按 A 开关
@@ -88,13 +93,15 @@ def save(muted: bool = None, *, assist: bool = None,
     两个参数都是 None 时什么都不写（调用点漏传不该清空存档）。
     写失败就静默放弃 —— 偏好丢了不致命，游戏挂了才致命。
     """
-    if muted is None and assist is None and taught is None:
+    if muted is None and assist is None and taught is None and lang is None:
         return
     data = _load()
     if muted is not None:
         data["muted"] = bool(muted)
     if assist is not None:
         data["assist"] = bool(assist)
+    if lang is not None:
+        data["lang"] = "en" if lang == "en" else "zh"
     if taught is not None:
         # 排序写盘：文件 diff 里能看出"多说了哪一句"，而不是整行重排
         data["taught"] = sorted({str(k) for k in taught})

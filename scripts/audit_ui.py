@@ -22,6 +22,7 @@ import pygame  # noqa: E402
 
 from sneak_ai import constants as C  # noqa: E402
 from sneak_ai.core import levels as L  # noqa: E402
+from sneak_ai.core import i18n  # noqa: E402
 from sneak_ai.__main__ import Game  # noqa: E402
 
 # 只关心"必须可读"的层；地图/角色/特效随便压，不算重叠
@@ -298,7 +299,7 @@ def find_out_of_bounds(rects):
 SIZES = [(1280, 960), (1024, 768), (896, 672), (800, 600)]
 
 
-def audit_size(size, level: int = 0) -> int:
+def audit_size(size, level: int = 0, lang: str = i18n.ZH) -> int:
     """把常量改成目标窗口尺寸，跑一遍三组的检查。"""
     import pygame  # 局部导入：main 之前不一定已经 init
 
@@ -306,6 +307,7 @@ def audit_size(size, level: int = 0) -> int:
     C.WINDOW_W, C.WINDOW_H = w, h
     C.VIEW_W, C.VIEW_H = w // C.TILE_SIZE, h // C.TILE_SIZE
     pygame.display.set_mode((w, h))
+    i18n.set_lang(lang)
     g = Game(start_level=level)
 
     # 清单漏登记 = 有一块 UI 从没进过账本。这里显式失败，别静默降低覆盖率。
@@ -314,18 +316,31 @@ def audit_size(size, level: int = 0) -> int:
         print(f"\n[!] 这些 _draw_* 方法没有登记进 _HUD_PARTS：{missing}")
         return 1
 
-    print(f"\n===== 窗口 {w}x{h} · 第{level + 1}关 =====")
+    print(f"\n===== 窗口 {w}x{h} · 第{level + 1}关 · {lang} =====")
     rc = 0
     for label, rects, mode in collect(g):
         rc |= report(rects, label, mode)
     return rc
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    """--lang en 时额外体检一遍英文版面。
+
+    英文比中文宽（"Stamina" 对"体力"），最容易出问题的就是左下那排面板 ——
+    而默认只审计中文的话，英文界面永远不会被测到。
+    """
+    argv = sys.argv[1:] if argv is None else argv
+    langs = [i18n.ZH]
+    if "--lang" in argv:
+        want = argv[argv.index("--lang") + 1] if len(argv) > argv.index("--lang") + 1 else "en"
+        langs = ["zh", "en"] if want == "all" else [want]
+
     rc = 0
-    for level in range(len(L.LEVELS)):
-        for size in SIZES:
-            rc |= audit_size(size, level)
+    for lang in langs:
+        i18n.set_lang(lang)
+        for level in range(len(L.LEVELS)):
+            for size in SIZES:
+                rc |= audit_size(size, level, lang)
     return rc
 
 

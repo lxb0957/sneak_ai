@@ -12,6 +12,7 @@ from .. import constants as C
 from ..ai.trace import KIND_COLORS
 from ..core.camera import Camera
 from ..core.grid import GridMap
+from ..core.i18n import t
 from ..core.ui import font
 
 # 面板显示最近几条。9 条 ≈ 屏幕上 150 像素高，1280x960 下不挡视野中心，
@@ -94,11 +95,11 @@ class DebugRenderer:
 
         f = font(13)
         screen.blit(font(13, True).render(
-            f"AI 决策流 · 最近 {PANEL_ROWS} 条", True, (152, 164, 180)),
+            t(f"AI 决策流 · 最近 {PANEL_ROWS} 条"), True, (152, 164, 180)),
             (rect.x + 9, rect.y + 5))
         rows = trace.recent(PANEL_ROWS)
         if not rows:
-            screen.blit(f.render("（还没有事件：开局头几秒通常只有巡逻）",
+            screen.blit(f.render(t("（还没有事件：开局头几秒通常只有巡逻）"),
                                  True, (118, 120, 128)),
                         (rect.x + 9, rect.y + 24))
             return
@@ -106,7 +107,7 @@ class DebugRenderer:
         for r in rows:
             color = KIND_COLORS.get(r.kind, (200, 200, 200))
             who = f"#{r.who}" if r.who else "--"
-            line = _fit(f, f"{r.t:6.1f} {who} {r.text}", rect.w - 20)
+            line = _fit(f, t(f"{r.t:6.1f} {who} {r.text}"), rect.w - 20)
             screen.blit(f.render(line, True, color), (rect.x + 9, y))
             y += 17
 

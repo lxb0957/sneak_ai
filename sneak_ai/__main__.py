@@ -31,6 +31,8 @@ from . import constants as C
 from .ai.coordination import Coordinator
 from .audio.sfx import SFX
 from .core import debrief
+from .core import i18n
+from .core.i18n import t
 from .core import tutorial
 from .core import records
 from .core import levels as L
@@ -131,8 +133,12 @@ def _init_pygame() -> None:
 class Game:
     def __init__(self, start_level: int = 0, trace_path: str = None):
         _init_pygame()
+        # 语言必须在**建窗口之前**定下来：标题、菜单、HUD 全靠它，
+        # 晚一步就会出现"第一帧中文、第二帧英文"的闪烁。
+        i18n.set_lang(settings.load_lang())
         self.screen = _create_window()
-        pygame.display.set_caption("潜行协议 Stealth Protocol")
+        # 窗口标题也走翻译：英文模式下任务栏还挂着中文会显得没做完
+        pygame.display.set_caption(t("潜行协议 Stealth Protocol"))
         self.clock = pygame.time.Clock()
 
         self.sfx = SFX()
@@ -956,7 +962,7 @@ def _show_crash(exc: BaseException, log) -> None:
             rows.append((font(14), str(log), (110, 120, 132)))
         y = H // 2 - 70
         for f, text, color in rows:
-            surf = f.render(text, True, color)
+            surf = f.render(t(text), True, color)
             screen.blit(surf, ((W - surf.get_width()) // 2, y))
             y += surf.get_height() + 14
         pygame.display.flip()

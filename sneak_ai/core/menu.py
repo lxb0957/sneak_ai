@@ -24,6 +24,7 @@ import pygame
 from .. import constants as C
 from . import records
 from . import levels as L
+from . import i18n
 from .ui import TextCache, font
 
 _BG = (14, 16, 20)
@@ -91,6 +92,13 @@ class Menu:
                 sfx.toggle_mute()
                 from . import settings
                 settings.save(sfx.muted)
+            elif ev.key == pygame.K_l:
+                # L = language。切完立刻落盘：下次进来还是这个语言，
+                # 否则英文玩家每次开游戏都要重新按一次（和静音同一个毛病）。
+                i18n.set_lang(i18n.other_lang())
+                from . import settings
+                settings.save(lang=i18n.lang())
+                sfx.play("pickup", cooldown=0.03, volume=0.28)
             elif ev.key == pygame.K_a:
                 # A = assist。不占用方向键 / 回车 / M / ESC 中的任何一个。
                 self.assist = not self.assist
@@ -110,8 +118,10 @@ class Menu:
         单独抽出来是为了能被测试断言。菜单的文案规则和选关规则一样，
         都属于"说错了玩家就误解"的东西，不该只活在 draw() 里的一个 f-string 中。
         """
+        lang_name = "中文" if i18n.lang() == i18n.ZH else "EN"
         foot = (f"M 音效：{'开' if not muted else '关'}    "
-                f"A 辅助：{'开' if self.assist else '关'}    ESC 退出")
+                f"A 辅助：{'开' if self.assist else '关'}    "
+                f"L 语言：{lang_name}    ESC 退出")
         if self.assist:
             foot += "    · 辅助模式不记纪录"
         if self.sel > 0:

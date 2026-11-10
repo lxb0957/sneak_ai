@@ -61,7 +61,17 @@ def _drive(g, frames, stop_when=None):
     return False
 
 
-def main():
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    # --lang en 出英文版的同一帧条件：README / itch 页面英文为主，
+    # 而"英文说明书 + 中文截图"是最容易被一眼看穿的不一致。
+    lang = "en" if "--lang" in argv and argv[argv.index("--lang") + 1:] == ["en"] else "zh"
+    from sneak_ai.core import i18n, settings
+    original = settings.load_lang
+    settings.load_lang = lambda: lang
+    i18n.set_lang(lang)
+    suffix = "" if lang == "zh" else "_en"
+
     pygame.init()
     g = Game()
     g.debug.enabled = False
@@ -85,7 +95,7 @@ def main():
 
     met = _drive(g, 60 * 30, lambda w: nice(w, g.cam))
     g._render(1 / 60)
-    pygame.image.save(g.screen, str(ROOT / "assets" / "gameplay.png"))
+    pygame.image.save(g.screen, str(ROOT / "assets" / f"gameplay{suffix}.png"))
 
     # F1 那张单独找一帧，不跟上面共用：首图要的是"安静地在潜行"，
     # 而调试视图要的是"面板上有因果链可看"。共用一帧的结果是二选一 ——
@@ -100,9 +110,10 @@ def main():
     met_dbg = _drive(g, 60 * 40, lambda w: nice_debug(w, g.cam))
     g.debug.enabled = True
     g._render(1 / 60)
-    pygame.image.save(g.screen, str(ROOT / "assets" / "ai_debug_view.png"))
+    pygame.image.save(g.screen, str(ROOT / "assets" / f"ai_debug_view{suffix}.png"))
 
-    print(f"已生成 assets/gameplay.png 与 ai_debug_view.png"
+    settings.load_lang = original
+    print(f"已生成 assets/gameplay{suffix}.png 与 ai_debug_view{suffix}.png"
           f"（t={g.world.elapsed:.1f}s，首图条件{'命中' if met else '未命中'} / "
           f"调试条件{'命中' if met_dbg else '未命中'}，"
           f"决策流 {len(g.world.trace.rows)} 条，"

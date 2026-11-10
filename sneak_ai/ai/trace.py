@@ -20,6 +20,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..core.i18n import t
+
 
 @dataclass
 class Row:
@@ -89,7 +91,9 @@ class Trace:
         self.t += dt
 
     def push(self, kind: str, text: str, who: int = 0, **data) -> None:
-        self.rows.append(Row(self.t, who, kind, text, data))
+        # 决策流的文字在这里翻一次：F1 面板和 `--trace` 落盘共用这一条路径，
+        # 两边就不会一个英文一个中文。中文模式下 t() 原样返回，行为不变。
+        self.rows.append(Row(self.t, who, kind, t(text), data))
         self.total += 1
 
     def recent(self, n: int = 9) -> list:

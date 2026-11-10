@@ -34,6 +34,7 @@ import sys
 import pygame
 
 from .. import constants as C
+from .i18n import t
 
 _FONT_CACHE = {}
 
@@ -96,7 +97,9 @@ def font(size: int, bold: bool = False) -> pygame.font.Font:
 
 
 def render(text: str, size: int, color, bold: bool = False) -> pygame.Surface:
-    return font(size, bold).render(text, True, color)
+    # 翻译只在这一道和 TextCache.get 里做：界面上的字全部先汇到这里，
+    # 所以在绘制入口拦一次就够，199 个调用点一个都不用改。
+    return font(size, bold).render(t(text), True, color)
 
 
 class TextCache:
@@ -111,6 +114,9 @@ class TextCache:
         self._limit = limit
 
     def get(self, key, text: str, size: int, color, bold: bool = False):
+        # 先翻译再算签名：切语言时 text 变了，缓存自然失效，
+        # 不需要在每个切换点上手动 clear()（漏一个就是"界面半中半英"）。
+        text = t(text)
         item = self._cache.get(key)
         sig = (text, size, tuple(color), bold)
         if item is not None and item[0] == sig:

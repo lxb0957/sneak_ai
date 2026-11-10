@@ -19,6 +19,7 @@ That log is not a debug printout added afterwards. It is what the behavior tree 
 - **5 levels**, each built around one idea: a corridor you cannot outrun, a hub you have to circle, a pillar hall with no straight lines, a power station where you can kill the lights, an inspection post with a 3-second window.
 - **Stealth that is not a health bar.** Being seen is not damage — it is information the guards now share. A body gets reported. A gunshot is heard 9.5 tiles away.
 - **No shooting required.** The fastest recorded run finishes in 66 seconds with zero kills, and scores higher than the run that shoots. Guns buy time, not points.
+- **Full English UI.** Chinese is the source language; press **L** in the menu to switch. (English text is a first pass by a non-native speaker — see the known-issues note in the repo.)
 - **Difficulty measured, not guessed.** A bot plays 96 games per level; win rates are 77% / 77% / 50% / 24% / 71%. Level 4 is the wall — there is an assist mode in the main menu (press **A**) if you get stuck.
 
 ## Controls
@@ -33,6 +34,7 @@ That log is not a debug printout added afterwards. It is what the behavior tree 
 | Left mouse | aim / shoot |
 | F1 | **AI debug view** |
 | Tab | full level map |
+| L (menu) | switch language: 中文 / English |
 
 ## Download
 
@@ -56,4 +58,5 @@ https://github.com/lxb0957/sneak_ai
 
 枪不是必需的：最快的一局 66 秒通关、零击倒，分数比开枪那局还高。五关的难度是机器人各跑 96 局量出来的（77% / 77% / 50% / 24% / 71%），第 4 关卡住了就在主菜单按 **A** 开辅助。
 
+支持中英双语界面（菜单里按 **L** 切换，中文是默认）。
 Windows 64 位免安装，28 MB 单文件，双击即玩。

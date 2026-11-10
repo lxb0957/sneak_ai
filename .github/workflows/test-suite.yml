@@ -90,7 +90,7 @@ jobs:
                    test_w17 test_w18 test_w19 test_w20 test_w21 test_w22 \
                    test_w23 test_w24 test_w25 test_w26 test_w27 test_w28 \
                    test_w29 test_w30 test_w31 test_w32 test_w33 test_w34 \
-                   test_w35 test_w36 test_w37 test_w38 test_robustness; do
+                   test_w35 test_w36 test_w37 test_w38 test_w39 test_robustness; do
             echo "===== $t ====="
             if ! python scripts/$t.py; then
               fail="$fail $t"
@@ -100,14 +100,14 @@ jobs:
             echo "::error::以下脚本未通过：$fail"
             exit 1
           fi
-          echo "全部 36 个脚本通过"
+          echo "全部 37 个脚本通过"
 
       # 下面这三项是"审计"而不是"单测"：它们不检查函数对不对，
       # 检查的是"画出来、算出来之后还有没有自相矛盾的地方"。
       # 布局审计是有退出码的门禁：任何一处 UI 重叠都会让 CI 失败。
       # 它比截图比对稳定得多 —— 比的是"两块文字有没有相交"，不是像素。
       - name: UI 重叠审计
-        run: python scripts/audit_ui.py
+        run: python scripts/audit_ui.py --lang all
 
       # 计分审计：四种玩法各跑一局，逐局和独立实现的设计公式对账。
       # 跑一次约 40 秒（机器人全速模拟，不开窗口），放在 CI 里能挡住
