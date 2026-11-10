@@ -36,7 +36,7 @@ That log is not a debug printout added afterwards. It is what the behavior tree 
 
 ## Download
 
-Windows 64-bit. A single 26 MB `.exe` — no installer, no Python, no dependencies. Double-click and play. Your records are written to `records.json` next to the executable.
+Windows 64-bit. A single 28 MB `.exe` — no installer, no Python, no dependencies. Double-click and play. Your records are written to `records.json` next to the executable.
 
 To check it runs on your machine first: `StealthProtocol-v1.8.11-win64.exe --selfcheck`
 
@@ -56,4 +56,4 @@ https://github.com/lxb0957/sneak_ai
 
 枪不是必需的：最快的一局 66 秒通关、零击倒，分数比开枪那局还高。五关的难度是机器人各跑 96 局量出来的（77% / 77% / 50% / 24% / 71%），第 4 关卡住了就在主菜单按 **A** 开辅助。
 
-Windows 64 位免安装，26 MB 单文件，双击即玩。
+Windows 64 位免安装，28 MB 单文件，双击即玩。

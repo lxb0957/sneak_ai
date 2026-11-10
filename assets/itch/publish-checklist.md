@@ -27,7 +27,7 @@ C:\Users\刘欣标\WorkBuddy\小游戏\sneak_ai\dist\StealthProtocol-v1.8.11-win
 勾上 **This file will be uploaded for Windows**。
 
 > itch 会提示"这是可执行文件，用户下载后会看到警告"。正常现象，所有 Windows 游戏都这样。
-> 那个 26 MB 的 exe 就是 Release 页上下载的同一个文件，sha256 已对过：
+> 那个 28 MB 的 exe 就是 Release 页上下载的同一个文件，sha256 已对过：
 > `13aac854d419a5e2d9a4cc2f8f83405d27bce97fe12641539470a63115833daf`
 
 如果你的 itch 上传限速，也可以只放链接跳回 GitHub Release —— 但**别这么做**，itch 上"点下载"是转化率最高的一步，跳走就断了。
