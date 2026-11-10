@@ -2,6 +2,9 @@
 
 *Posted with the v1.8.13 build. ~5 min read. Code: [github.com/lxb0957/sneak_ai](https://github.com/lxb0957/sneak_ai)*
 
+> 原本是给 itch devlog 写的。itch 暂不上架（2026-11-10），这篇照样能用：
+> 发 r/gamedev 长文、贴 BLOG、或者当 HN 正文的补充材料，链接换成 Release 页即可。
+
 Every difficulty number on this page was produced by a bot, not by me playing.
 
 That is not a humblebrag. It is the only way I could keep the numbers honest. When you tune five levels yourself, you stop being able to tell "this is hard" from "I have played this level four hundred times and I know where the guard turns." So I wrote a bot that plays the game through the same input path a human does, ran it 96 times per level on fixed seeds, and let the win rate be the difficulty.
