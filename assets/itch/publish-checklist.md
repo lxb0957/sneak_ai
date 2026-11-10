@@ -68,7 +68,14 @@ C:\Users\刘欣标\WorkBuddy\小游戏\sneak_ai\dist\StealthProtocol-v1.8.11-win
 - [ ] Visibility = **Public**
 - [ ] 点 **Save & view page**，自己走一遍下载流程
 
-## 七、上架之后（这些我能做，说一声就行）
+## 七、顺便把 GitHub 那两项设置了（5 分钟，影响"分享出去长什么样"）
+
+| 位置 | 做什么 |
+|---|---|
+| 仓库 → **Settings → Social preview** | 上传 `assets/itch/social-preview.png`（1280×640）。不设的话，把仓库链接发到微信/群/X 里，卡片上是一张灰底默认图 |
+| 仓库 → **About**（右侧齿轮） | description 和 website 我已经用 API 设好了；确认 website 指向 `releases/latest`（上架后可以改成 itch 页面） |
+
+## 八、上架之后（这些我能做，说一声就行）
 
 1. 把 itch 链接填回 `README.md` 顶部（"不想装 Python？"那段现在只有 GitHub Release 链接）
 2. 把 GitHub 仓库的 homepage 从 `releases/latest` 改成 itch 页面（对外落地页放 itch 更合适：有截图、有标签、能被站内搜到）
