@@ -1,0 +1,15 @@
+===== URL (submit this as the link) =====
+https://github.com/lxb0957/sneak_ai
+===== TITLE =====
+Show HN: A 2D stealth game where every guard runs a hand-written AI
+===== BODY =====
+Author here. This started as a portfolio project: I wanted a game AI stack I could be asked about in detail, without a behavior-tree library, a pathfinding library, or any learned policy. So perception (grid raycast + hearing), decision (behavior tree), pathing (flow field) and squad coordination are all in the repo, hand-written.
+
+Two things might be interesting here beyond the game:
+
+1. The vision cone and the "can this guard see me" check are the same function. They used to be two fixed-step raymarchers, and fixed-step raycasting skips a wall when the ray crosses a corner diagonally. Measured on the real maps: 1.29% of sight lines within 8 tiles went through walls, and 0.00% went the other way. The cone on screen drew the same wrong ray, so it looked like a feature.
+
+2. Difficulty is measured, not tuned by feel. A bot plays 96 games per level on fixed seeds; the win rates are 77/77/50/24/71%. Level 4 has stayed at ~24% through nine redesigns, so I wrote down why and shipped an assist mode instead of pretending.
+
+Windows x64 only for the binary, single exe, no install: https://github.com/lxb0957/sneak_ai/releases/latest
+The source runs on macOS and Linux with pip install. MIT.

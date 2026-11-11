@@ -75,6 +75,13 @@ Two things from the write-up that this sub might find useful:
   raymarchers; fixed-step skips walls on diagonal corner crossings. 1.29% of sight lines within
   8 tiles went through walls, 0.00% the other way.
 - Flow field went from 18 ms to 4 ms a frame after I stopped rebuilding it every tick.
+- After losing you, a guard doesn't walk back to where he last saw you. He enumerates hiding
+  spots (tiles invisible from your last known position AND walled on 3+ sides), turns each into
+  a GOAP action with the goal "all checked", and lets the planner order them by shortest total
+  walk. Cost is Manhattan distance, deliberately not real A*: three search points would be nine
+  full-map searches at the exact moment you vanish. State is a frozenset of predicates, which
+  bit me exactly once: a frozenset only grows, so the first planner happily teleported a guard
+  between spots. STRIPS delete list fixed it.
 
 Windows exe in the link, source is MIT and runs on macOS/Linux with pip install.
 
@@ -82,6 +89,7 @@ Happy to go into the pathing or the flow field if anyone's building something si
 ```
 
 **附**：一张 F1 调试视图 GIF（`assets/demo.gif` 前半段更好，锥体动起来才看得出）。
+Reddit 发帖时优先用视频 `assets/demo.mp4`（960×720），GIF 放大后字看不清。
 
 ### r/IndieGaming
 
@@ -105,7 +113,7 @@ A stealth game where being seen isn't damage — it's information the guards now
 
 ## 三、X / Twitter
 
-一条主推 + 三条串，配 GIF。
+一条主推 + 三条串，配视频。
 
 ```
 A stealth game where the guards' AI is the product.
@@ -115,7 +123,7 @@ why each one changed his mind.
 
 No behavior-tree library. No pathfinding library. Written from scratch, in Python.
 
-[GIF]
+[视频：assets/x-clip.mp4]
 ```
 
 ```
@@ -135,14 +143,18 @@ intended behaviour for months.
 decision call. One geometry, two consumers.
 ```
 
-**配图**：`assets/x-clip.gif`（12.1 秒 / 1.90 MB）。它是从 `assets/demo.gif` 截的 24–36 秒，
-正好是"被发现 → 甩脱"那一段 —— 红边框从 25.3 秒起亮，比整段 6.4 MB 更适合信息流。
+**配图**：**发视频，别发 GIF** —— `assets/x-clip.mp4`（16 秒 / 1.7 MB / 960×720 / 30fps），
+和 GIF 是同一时段（游戏时间 32–48 秒，"被发现 → 甩脱"），但清晰一个档次；X 和 Reddit
+上传 mp4 都会自动转播放器，观众能看清 HUD 的字。GIF（432 宽）只在 GitHub README 里用
+—— GitHub 的 markdown 渲染不放 mp4。
 
-要换窗口就改参数重截，别手拖：
+完整一局的视频是 `assets/demo.mp4`（67 秒 / 5.3 MB），给 r/pygame 或 B 站用；它由
+`scripts/record_demo.py --mp4` 录制，成绩与 README 引用的同一局一致（66.3s / 846 分），
+可以放心对外引用。要重新出片段：
 
 ```bash
-python scripts/trim_demo_gif.py --scan                    # 先看每帧红边框强度，找警报起点
-python scripts/trim_demo_gif.py --start 24 --seconds 12   # 再截
+python scripts/record_demo.py --mp4                    # 整局 -> assets/demo.mp4
+ffmpeg -ss 32 -t 16 -i assets/demo.mp4 ...             # 裁片段（见下方 GIF 说明）
 ```
 
 **注意**：前 2 秒必须有动作（哨兵回头/追人），不要用标题卡开场；GIF 超过 5 MB
@@ -177,6 +189,13 @@ X 会再压一轮，掉帧很明显 —— 脚本会在超限时警告。
 
 2. 难度用机器人量：每关 96 局固定种子，胜率 77/77/50/24/71%。第 4 关改了九版还是 24%，
    原因写进 KNOWN_ISSUES 了，另外加了辅助模式，没有假装它是「设计上的难」。
+
+3. 跟丢之后不回到最后看见你的地方转圈。先找藏身点（从记忆点看不见、且至少三面贴墙的
+   格子），每个点变成一个 GOAP 动作，目标写「每处都搜过」，让规划器在谓词空间里跑 A*
+   排出总脚程最短的顺序。代价刻意用曼哈顿距离而不是真 A* —— 三个搜索点就是九次全图搜索，
+   正好卡在你消失那一帧。这里还踩了个更经典的坑：状态用 frozenset 存谓词，而 frozenset
+   只能加不能减 —— 第一版规划器直接给出了「瞬移到所有去过的地方」的计划，补上 STRIPS
+   的 delete list 才对。
 
 Windows 免安装单文件，源码 MIT（Python + pygame，macOS/Linux 也能跑）。
 

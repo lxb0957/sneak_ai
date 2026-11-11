@@ -1,0 +1,17 @@
+===== TITLE =====
+Five levels, one continuous run, no checkpoints — a stealth game in pygame with a hand-written AI stack
+===== BODY =====
+Some context: this is a 2D top-down stealth sandbox built on pygame-ce, all art procedural (no asset packs). The thing I actually care about is the AI: perception, behavior tree, flow-field pathing and squad coordination are all hand-written, no libraries.
+
+Press F1 in game and every guard shows his state, suspicion, and a timeline of his last decisions in plain text — it's emitted by the behavior tree every frame, not a bolted-on debug print.
+
+Three things from the write-up that this sub might find useful:
+
+- Vision cone and line-of-sight check are one function now. They used to be two fixed-step raymarchers, and fixed-step raycasting skips a wall when the ray crosses a corner diagonally. Measured on the real maps: 1.29% of sight lines within 8 tiles went through walls, 0.00% went the other way. The cone on screen drew the same wrong ray, so it looked like normal behavior and hid for months.
+- Flow field went from 18 ms to 4 ms a frame after I stopped rebuilding it every tick.
+- After losing you, a guard doesn't walk back to where he last saw you. He enumerates hiding spots (tiles invisible from your last known position AND walled on 3+ sides), turns each into a GOAP action with the goal "all checked", and lets the planner order them by shortest total walk. Cost is Manhattan distance, deliberately not real A*: three search points would be nine full-map searches at the exact moment you vanish. State is a frozenset of predicates, which bit me exactly once: a frozenset only grows, so the first planner happily teleported a guard between spots. A STRIPS delete list fixed it.
+
+Windows x64, single exe, no install: https://github.com/lxb0957/sneak_ai/releases/latest
+Source is MIT and runs on macOS/Linux with pip install.
+
+Happy to go into the pathing or the flow field if anyone's building something similar.
