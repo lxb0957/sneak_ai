@@ -24,17 +24,17 @@ itch.io → 右上角头像 → **Upload new project**
 
 ## 二、上传文件
 
-**Uploads → Upload files**，选：
+**Uploads → Upload files**，选仓库下的（相对仓库根）：
 
 ```
-C:\Users\刘欣标\WorkBuddy\小游戏\sneak_ai\dist\StealthProtocol-v1.8.13-win64.exe
+dist\StealthProtocol-v1.8.14-win64.exe
 ```
 
 勾上 **This file will be uploaded for Windows**。
 
 > itch 会提示"这是可执行文件，用户下载后会看到警告"。正常现象，所有 Windows 游戏都这样。
-> 那个 28 MB 的 exe 就是 Release 页上下载的同一个文件（`dist\StealthProtocol-v1.8.13-win64.exe` 已从 Release 拉回本地核对），sha256 已对过：
-> `408ab7d61b86ddfa122994d672637d39b59979a489fea579c0cffa3cd1df6800`
+> 那个 28 MB 的 exe 就是 Release 页上下载的同一个文件（`dist\StealthProtocol-v1.8.14-win64.exe` 已从 Release 拉回本地核对），sha256 已对过：
+> `（v1.8.14 构建完成后回填，见 Release 页的 digest）`
 
 如果你的 itch 上传限速，也可以只放链接跳回 GitHub Release —— 但**别这么做**，itch 上"点下载"是转化率最高的一步，跳走就断了。
 

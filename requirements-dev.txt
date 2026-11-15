@@ -1,0 +1,9 @@
+# 只在开发 / 出图 / 打包时需要，玩游戏和跑测试都不需要。
+#   pip install -r requirements-dev.txt
+#
+# 分两份的理由：requirements.txt 是"跑起来要什么"，这份是"改它 / 发版要什么"。
+# 玩家 clone 下来只为玩的话，不该被 matplotlib 拖去装一堆科学计算依赖。
+
+matplotlib>=3.8        # scripts/make_charts.py 出 README 那两张图
+pyinstaller>=6.0       # build_exe.py 打包单文件 exe（CI 里单独装，见 release.yml）
+imageio-ffmpeg>=0.4    # scripts/record_demo.py --mp4 录演示视频（自带 ffmpeg 二进制）

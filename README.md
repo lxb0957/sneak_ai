@@ -1050,7 +1050,7 @@ Selector
 
 ```bash
 # 安装依赖（国内用清华镜像）
-pip install -i https://pypi.tuna.tsinghua.edu.cn/simple pygame-ce numpy matplotlib pillow
+pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
 
 # 运行游戏
 python -m sneak_ai
@@ -1058,10 +1058,14 @@ python -m sneak_ai --level 3        # 直接从第 3 关开局（也支持 exe�
 # 或双击 run.bat
 ```
 
+`requirements.txt` 只有跑游戏要的三样（pygame-ce / numpy / pillow）。
+出图、打包、录视频要的东西在 `requirements-dev.txt`（matplotlib / pyinstaller /
+imageio-ffmpeg），玩家不用装。
+
 ### 打包成 exe（给没装 Python 的人）
 
 ```bash
-pip install pyinstaller
+pip install -r requirements-dev.txt   # 含 pyinstaller
 python build_exe.py                  # 产物：dist/潜行协议.exe（约 28 MB）
 dist/潜行协议.exe --selfcheck        # 打完之后先自检，别靠人盯着屏幕验
 ```
@@ -1070,7 +1074,7 @@ dist/潜行协议.exe --selfcheck        # 打完之后先自检，别靠人盯�
 
 1. **入口必须是根目录的 `launch.py`，不能直接打包 `sneak_ai/__main__.py`**。PyInstaller 把指定文件当顶层脚本执行，后者 `__package__` 是空串，`from . import constants` 当场 `ImportError: attempted relative import with no known parent package`——而且崩在**导入阶段**，连 `crash.log` 都来不及写，双击就是控制台闪一下。`python -m sneak_ai` 测一百次都测不出来，因为那条路 `__package__` 是正常的。
 2. **存档必须写在 exe 旁边**，不能进 onefile 的临时解包目录（每次启动换一个、退出即删，等于"打完一局纪录没了"）。`_frozen_data_dir()` 把 `records` / `settings` 的路径锚到 exe 所在目录；`assets/` 则根本不用带，精灵和音效全是代码生成的。
-3. **控制台输出不要用 emoji**。中文 Windows 的 cmd 是 GBK，`✅` 会抛 `UnicodeEncodeError`，于是"自检通过"那一行把自己搞成非零退出——看起来像打包失败。
+3. **输出必须有一个去处，否则 `--windowed` 会静默死亡**。Windows 上不带控制台的进程 `sys.stdout` / `sys.stderr` 都是 `None`，而项目里有 17 处 `print` 全在诊断路径上 —— `print` 撞上 `None` 抛 `AttributeError`，表现就是**双击之后什么都没发生**，连 `crash.log` 都没有（崩在写日志之前）。所以 `launch.py` 在最早期把 stream 接到 exe 旁边的 `runtime.log`，并装了 excepthook：连导入阶段崩掉的 traceback 也会落进同一个文件。顺带的教训是**控制台输出不要用 emoji**：中文 Windows 的 cmd 是 GBK，`✅` 会抛 `UnicodeEncodeError`，让"自检通过"那一行把退出码搞成 1。
 
 `--selfcheck` 就是为这类"打包后才发作"的问题加的：跳过菜单直接开一局，**五关各跑 120 帧**真实 `world.update` + 整帧 `_render`，断言"玩家真的动了、敌人真的动了、相机推得到地图东沿、Tab 全图放得进窗口"，退出码即结论。**菜单能显示不代表游戏能玩**，而"进了游戏才走到"的那条路径恰恰是打包最容易漏的；只跑第 1 关则连第 4 关那个"最右边 12 格永远看不到"的相机 bug 都验不出来。
 

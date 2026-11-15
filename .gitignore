@@ -9,6 +9,8 @@ venv/
 records.json
 settings.json
 crash.log
+# windowed 打包后没有控制台，launch.py 把 stdout/stderr 接到这个文件
+runtime.log
 
 # 构建产物
 build/

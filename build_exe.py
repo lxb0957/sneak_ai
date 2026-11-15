@@ -15,9 +15,14 @@
    打包后 `__file__` 在临时目录里，所以由 `sneak_ai/__main__.py` 里的
    `_frozen_data_dir()` 在启动最早期把路径锚点改到 exe 所在目录。
 
-3. **console**：Windows 上保留控制台窗口。代价是多一个黑框，
-   收益是崩溃信息不会凭空消失 —— crash.log 已经兜底，但"看得见的报错"
-   永远比"去某个目录找日志"更快。Linux/macOS 下没有这个概念，忽略。
+3. **windowed**：Windows 上**不**分配控制台，双击不弹黑框。
+   代价是进程没有 stdout/stderr（`sys.stdout is None`），而项目里有 17 处
+   `print` 全在诊断路径上 —— 直接打会 `AttributeError`，表现为
+   "双击之后什么都没发生"。所以 `launch.py` 在最早期把它们接到
+   exe 旁边的 `runtime.log`，并装了 excepthook：连导入阶段崩掉
+   （`__package__` 为空那个坑）的 traceback 也会落进同一个文件。
+   这个决定的前提是：**日志已经能兜住了，才敢把"看得见的报错"换成"不弹黑框"**。
+   Linux/macOS 下没有这个概念，忽略。
 
 4. **入口是根目录的 `launch.py`，不是 `sneak_ai/__main__.py`**。
    这是第一次真跑打包时踩到的：PyInstaller 把指定文件当**顶层脚本**执行，
@@ -89,7 +94,9 @@ def main() -> int:
         "--exclude-module", "pytest",
     ]
     if os.name == "nt":
-        args.append("--console")     # 保留控制台：崩了至少看得见
+        # 不弹黑框。前提是 launch.py 已经把 stdout/stderr 接到 runtime.log 了 ——
+        # 否则 17 处 print 会撞上 None，变成"双击没反应"。
+        args.append("--windowed")
     pyi.run(args)
     out = ROOT / "dist" / (name + (".exe" if os.name == "nt" else ""))
     if out.exists():

@@ -1,6 +1,6 @@
 # Devlog #1 — A bot decides how hard my levels are
 
-*Posted with the v1.8.13 build. ~5 min read. Code: [github.com/lxb0957/sneak_ai](https://github.com/lxb0957/sneak_ai)*
+*Posted with the v1.8.14 build. ~5 min read. Code: [github.com/lxb0957/sneak_ai](https://github.com/lxb0957/sneak_ai)*
 
 > 原本是给 itch devlog 写的。itch 暂不上架（2026-11-10），这篇照样能用：
 > 发 r/gamedev 长文、贴 BLOG、或者当 HN 正文的补充材料，链接换成 Release 页即可。
