@@ -5,7 +5,8 @@
       Q 或鼠标右键 投石 / F1 AI 调试视图 / M 静音 / R 重开 / ESC 回主菜单
 
 玩法闭环：
-1. 潜入：前往数据终端（绿色发光标记），一路避开 21 个哨兵的视线与听觉。
+1. 潜入：前往数据终端（绿色发光标记），一路避开哨兵的视线与听觉
+   （五关的守卫数分别是 17 / 13 / 29 / 11 / 7）。
 2. 逃脱：拿到数据后全图警觉，返回撤离点（蓝色箭头）。
 3. 结算：抵达撤离点=胜利（评级 S/A/B/C + 得分 + 最佳纪录），被抓住=失败。
 
@@ -24,6 +25,15 @@ import sys
 import time
 import traceback
 from pathlib import Path
+
+# 高 DPI 屏必须先声明"我懂缩放"，否则 Windows 会把整个窗口当成位图拉伸。
+# 必须在 import pygame（进而初始化 SDL）之前设置：没设的时候 SDL 看到的桌面是
+# 虚拟化后的逻辑尺寸，窗口按逻辑像素建出来、再由系统按缩放比拉伸到物理像素 ——
+# 150% 就是 1.5 倍非整数放大，像素画的边缘和 12px 的字都会发虚。
+# 实测本机 2560x1600 @150%：不设 -> SDL 报 1707x1067；设了 -> 报 2560x1600，
+# 于是 _create_window 会按真实分辨率挑尺寸，1280x960 是 1:1 的物理像素。
+# 非 Windows 平台 SDL 直接忽略这个变量，不影响 macOS/Linux。
+os.environ.setdefault("SDL_WINDOWS_DPI_AWARENESS", "permonitorv2")
 
 import pygame
 

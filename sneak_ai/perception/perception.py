@@ -32,7 +32,8 @@ class Perception:
         self.fov_angle = fov_angle  # 总视场角（弧度）
         self.view_range = view_range
         self.hear_range = hear_range
-        self.suspicion = 0.0  # 可疑度 0~1，累积到阈值才"确认"发现
+        # 这里**故意没有** suspicion 字段：可疑度属于敌人（Enemy.suspicion），
+        # Perception 只回答"能不能看见 / 听得见多少"，不带状态。
 
     def can_see(
         self,
@@ -112,22 +113,11 @@ class Perception:
             return 0.0
         return min(1.0, noise * 0.8) * (1.0 - dist / eff_range)
 
-    def update_suspicion(
-        self,
-        eye: tuple,
-        facing: float,
-        target: tuple,
-        grid: GridMap,
-        dt: float,
-        noise: float,
-        cost: float = None,
-    ) -> float:
-        """累积可疑度；看不见听不见时缓慢衰减。返回当前可疑度。"""
-        see = self.can_see(eye, facing, target, grid)
-        hear = self.can_hear(eye, target, noise, cost=cost)
-        stim = max(see, hear * 0.6)  # 听觉线索弱于视觉
-        if stim > 0:
-            self.suspicion = min(1.0, self.suspicion + stim * dt * 1.5)
-        else:
-            self.suspicion = max(0.0, self.suspicion - dt * 0.3)
-        return self.suspicion
+    # 可疑度的累积（视觉 + 听觉融合、无刺激时衰减）不在这里，在
+    # `entity/enemy.py` 的 `_sense()` 里 —— 那边要同时写 `_last_seen`、
+    # `search_slot`、`_noise_lock` 等一串状态，抽不出来。
+    #
+    # 这里曾有一个 `update_suspicion()`，看起来是本模块的正经入口，
+    # 实际上没有任何调用者，而且系数早就跟真实实现漂开了
+    # （写死 `* 1.5`，真实实现用 `C.SUSPICION_GAIN`）。它比没有更糟：
+    # 谁要是照着它调难度，改完发现游戏里毫无变化。2026-11-15 删掉。
