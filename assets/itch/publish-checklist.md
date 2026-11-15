@@ -34,7 +34,7 @@ dist\StealthProtocol-v1.8.14-win64.exe
 
 > itch 会提示"这是可执行文件，用户下载后会看到警告"。正常现象，所有 Windows 游戏都这样。
 > 那个 28 MB 的 exe 就是 Release 页上下载的同一个文件（`dist\StealthProtocol-v1.8.14-win64.exe` 已从 Release 拉回本地核对），sha256 已对过：
-> `（v1.8.14 构建完成后回填，见 Release 页的 digest）`
+> `f4b4ffaf1e1220c61c4c9d079ac57caa89d3a08888af7741827042b2cbe11cf5`（27,794,745 B）
 
 如果你的 itch 上传限速，也可以只放链接跳回 GitHub Release —— 但**别这么做**，itch 上"点下载"是转化率最高的一步，跳走就断了。
 
