@@ -17,3 +17,9 @@ build/
 dist/
 *.spec
 build/shots/
+
+# 网页版导出目录（24 MB，部署产物，由 scripts/build_web.py 生成）
+web_site/
+
+# 腾讯云 COS 凭据（千万不要提交）
+.sneak_cos.json
