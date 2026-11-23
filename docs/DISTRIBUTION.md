@@ -37,6 +37,17 @@ python build_exe.py                           # 重建便携包（若有改动�
 存成正常文件名（Chrome / Edge / Firefox 实测保存名正确）。探测方法：请求一个**不存在**的
 `/probe/x.<ext>`，404 = 放行，403 = 被 WAF 拦。
 
+**分享码必须跟着导航走**：网关认的是「导航 URL 上的 `?sharecode=`」，只靠它种下的
+`__wb_rsc` cookie **不够** —— 页面里普通的 `fetch(..., {credentials:'same-origin'})` 能过，
+但 wasm 运行时发的那些请求（不带 `sec-fetch-*`）会被 403，表现是从落地页点进 `/play/`
+之后永远停在 1×1 的空 canvas 上。所以落地页有一段脚本把首屏查询串原样带到游戏页：
+
+```js
+if (a && location.search) a.href = 'play/' + location.search;   // → /play/?sharecode=…
+```
+
+同理，对外发的链接**必须带 `?sharecode=`**，裸域名会 403。
+
 ---
 
 ## 一、先认清三个坑

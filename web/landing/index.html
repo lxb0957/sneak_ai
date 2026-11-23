@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>潜行协议 Stealth Protocol — 2D 潜行沙盒</title>
+<meta name="description" content="从零手写的 2D 潜行沙盒：感知、GOAP 决策、流场寻路、小队协同全部自己实现。Windows 单文件免安装，也可直接在浏览器里玩。">
+<meta property="og:type" content="website">
+<meta property="og:title" content="潜行协议 Stealth Protocol">
+<meta property="og:description" content="2D 潜行沙盒，游戏 AI 全套自己写：感知 / GOAP 决策 / 流场寻路 / 小队协同。">
+<meta property="og:image" content="og.png">
+<style>
+  :root {
+    --bg: #070b12;
+    --panel: #0d1420;
+    --line: #1b2736;
+    --ink: #e6edf3;
+    --dim: #8b98a8;
+    --green: #5be08a;
+    --blue: #7fb2f0;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.7 "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 0 24px; }
+
+  /* ---------- hero ---------- */
+  header { padding: 68px 0 56px; }
+  .hero { display: grid; grid-template-columns: 1fr 1.05fr; gap: 48px; align-items: center; }
+  .tag {
+    display: inline-block; margin-bottom: 18px; padding: 4px 12px;
+    border: 1px solid var(--line); border-radius: 999px;
+    color: var(--dim); font-size: 13px; letter-spacing: .04em;
+  }
+  h1 { margin: 0 0 6px; font-size: 40px; line-height: 1.25; letter-spacing: .01em; }
+  h1 small { display: block; margin-top: 8px; font-size: 15px; font-weight: 400; color: var(--dim); letter-spacing: .12em; }
+  .lead { margin: 18px 0 0; color: #b6c2d0; font-size: 16.5px; }
+  .lead b { color: var(--ink); font-weight: 600; }
+
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 13px 26px; border-radius: 8px; border: 1px solid transparent;
+    font-size: 15.5px; font-weight: 600; text-decoration: none;
+    transition: transform .12s ease, box-shadow .12s ease, background .12s ease;
+  }
+  .btn:hover { transform: translateY(-1px); }
+  .btn-primary { background: var(--green); color: #04140b; box-shadow: 0 6px 22px rgba(91,224,138,.22); }
+  .btn-primary:hover { background: #6ff09b; box-shadow: 0 10px 28px rgba(91,224,138,.3); }
+  .btn-ghost { background: #111b28; color: var(--ink); border-color: var(--line); }
+  .btn-ghost:hover { background: #16222f; border-color: #2a3a4d; }
+  .hint { margin-top: 14px; font-size: 13.5px; color: var(--dim); }
+
+  .shot {
+    position: relative; border-radius: 10px; overflow: hidden;
+    border: 1px solid var(--line);
+    box-shadow: 0 22px 60px rgba(0,0,0,.6), 0 0 0 1px rgba(91,224,138,.07);
+  }
+  .shot img { display: block; width: 100%; height: auto; }
+
+  /* ---------- stats ---------- */
+  .stats {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px;
+    background: var(--line); border: 1px solid var(--line);
+    border-radius: 10px; overflow: hidden; margin: 8px 0 64px;
+  }
+  .stat { background: var(--panel); padding: 22px 24px; }
+  .stat .n { font-size: 24px; font-weight: 700; color: var(--green); letter-spacing: .01em; }
+  .stat .k { margin-top: 4px; font-size: 13.5px; color: var(--dim); }
+
+  /* ---------- sections ---------- */
+  section { padding: 56px 0; border-top: 1px solid var(--line); }
+  h2 { margin: 0 0 8px; font-size: 24px; }
+  h2 span { color: var(--dim); font-weight: 400; font-size: 15px; margin-left: 10px; letter-spacing: .04em; }
+  .sub { margin: 0 0 28px; color: var(--dim); font-size: 14.5px; }
+
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 22px 22px 20px;
+  }
+  .card h3 { margin: 0 0 8px; font-size: 16px; color: var(--blue); }
+  .card p { margin: 0; font-size: 14.5px; color: #a7b3c2; line-height: 1.72; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: 500; font-size: 13px; letter-spacing: .05em; }
+  td:first-child { width: 190px; }
+  kbd {
+    display: inline-block; min-width: 26px; padding: 2px 7px; text-align: center;
+    background: #16222f; border: 1px solid #26364a; border-bottom-width: 2px;
+    border-radius: 5px; font-family: ui-monospace, Consolas, monospace; font-size: 12.5px;
+    color: #d6e2f0;
+  }
+
+  .req { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .req div { font-size: 14.5px; color: #a7b3c2; }
+  .req strong { display: block; margin-bottom: 6px; color: var(--ink); font-size: 15px; }
+
+  footer {
+    padding: 34px 0 56px; border-top: 1px solid var(--line);
+    color: var(--dim); font-size: 13.5px;
+  }
+  footer a { color: #9db8d8; text-decoration: none; border-bottom: 1px solid #26364a; }
+  footer a:hover { color: var(--ink); }
+
+  @media (max-width: 860px) {
+    header { padding: 44px 0 36px; }
+    .hero { grid-template-columns: 1fr; gap: 32px; }
+    h1 { font-size: 30px; }
+    .stats, .grid3, .req { grid-template-columns: 1fr; }
+    td:first-child { width: 130px; }
+    section { padding: 40px 0; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="hero">
+      <div>
+        <span class="tag">Windows 免安装 · 也可在线玩</span>
+        <h1>潜行协议<small>STEALTH PROTOCOL</small></h1>
+        <p class="lead">
+          一个从零手写的 2D 潜行沙盒。敌人不是照着脚本巡逻的木桩 ——
+          <b>视觉锥、听觉半径、最后已知位置、GOAP 决策、流场寻路、小队包抄</b>
+          全部自己实现，所以它会记、会找、会叫支援。
+        </p>
+        <div class="cta">
+          <a class="btn btn-primary" href="download/stealth-protocol-win64" download="StealthProtocol-v1.8.14-win64.zip">下载 Windows 版 · 26 MB</a>
+          <a class="btn btn-ghost" id="play" href="play/">浏览器里直接玩</a>
+        </div>
+        <p class="hint">单文件 exe，双击即玩，不用装 Python。五关，约 20 分钟一周目。<br>
+          下载慢或打不开？<a href="https://github.com/lxb0957/sneak_ai/releases/latest" style="color:#9db8d8">走 GitHub Releases 备用通道</a>。</p>
+      </div>
+      <div class="shot"><img src="shot-level.png" alt="游戏画面：第 1 关，HUD 显示用时、暴露条、体力与弹药"></div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="stats">
+    <div class="stat"><div class="n">5 关</div><div class="k">纯手工关卡，无随机生成</div></div>
+    <div class="stat"><div class="n">17 名</div><div class="k">第一关在岗哨兵，各有视野与巡逻</div></div>
+    <div class="stat"><div class="n">0 依赖</div><div class="k">纯 Python + pygame，AI 无第三方库</div></div>
+  </div>
+</div>
+
+<section>
+  <div class="wrap">
+    <h2>AI 是真的在思考<span>不是巡逻脚本</span></h2>
+    <p class="sub">每个哨兵每帧都在算：我现在看见了什么、刚才听到的声音该不该信、追丢了往哪找、要不要喊人。</p>
+    <div class="grid3">
+      <div class="card">
+        <h3>它会怀疑</h3>
+        <p>看见模糊的影子不是立刻开枪，而是走上来确认。怀疑值会累积、会衰减，被你连续晃三次就真警觉了。</p>
+      </div>
+      <div class="card">
+        <h3>它会搜</h3>
+        <p>追丢之后不是原地复位，而是去"最后一次看见你"的位置附近沿房间搜索，再慢慢扩散到相邻区域。</p>
+      </div>
+      <div class="card">
+        <h3>它会喊人</h3>
+        <p>发现目标会通知半径内的同伴，同伴转而包抄你的退路。有人倒地时，最近的哨兵会离开岗位去查看。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>怎么玩<span>键盘 + 鼠标</span></h2>
+    <p class="sub">目标是走到绿色标记的数据终端。被发现的次数越少、用时越短，结算评价越高。</p>
+    <table>
+      <tr><th>按键</th><th>动作</th></tr>
+      <tr><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></td><td>移动</td></tr>
+      <tr><td><kbd>Shift</kbd></td><td>潜行 —— 噪音降到 0.3，贴到背后也听不见</td></tr>
+      <tr><td><kbd>Space</kbd></td><td>冲刺 —— 快，但声音传得远，还费体力</td></tr>
+      <tr><td>鼠标左键</td><td>消音手枪，5 发，射程 12 格</td></tr>
+      <tr><td><kbd>Q</kbd> / 右键</td><td>投石 —— 把哨兵引到别处，每局 3 颗</td></tr>
+      <tr><td><kbd>Tab</kbd></td><td>看整关地图（会暂停，但不显示敌人位置）</td></tr>
+      <tr><td><kbd>E</kbd></td><td>拉总闸，只在第 4 关有效</td></tr>
+      <tr><td><kbd>M</kbd></td><td>静音</td></tr>
+    </table>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>配置要求</h2>
+    <p class="sub">老机器也能跑，核显足够。</p>
+    <div class="req">
+      <div>
+        <strong>Windows 桌面版（推荐）</strong>
+        Windows 10 / 11 64 位 · 4 GB 内存 · 50 MB 磁盘<br>
+        首次运行若被 SmartScreen 拦下，点"更多信息 → 仍要运行"。
+      </div>
+      <div>
+        <strong>浏览器版</strong>
+        支持 WebAssembly 的现代浏览器（Chrome / Edge / Firefox 新版）。<br>
+        首次打开需要 15–20 秒下载并编译运行时，之后按钮操作正常；<b>手机不能玩</b>，需要键盘鼠标。
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    开源项目：<a href="https://github.com/lxb0957/sneak_ai">github.com/lxb0957/sneak_ai</a>
+    · 纯 Python + pygame-ce，AI、寻路、关卡全部手写，没有用现成引擎。
+  </div>
+</footer>
+
+<script>
+/* 托管网关按「导航 URL 上的分享码」放行，cookie 不够 —— 页面里普通 fetch 带 cookie 能过，
+   但 wasm 运行时发的请求会被 403（它不带 sec-fetch-*）。所以把首屏的查询串原样带到游戏页，
+   否则从落地页点进去，游戏永远卡在 1×1 的空 canvas 上。 */
+(function () {
+  var a = document.getElementById('play');
+  if (a && location.search) a.href = 'play/' + location.search;
+})();
+</script>
+
+</body>
+</html>
