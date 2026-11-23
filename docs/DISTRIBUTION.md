@@ -117,18 +117,37 @@ python scripts/cos_upload.py                         # 上传 dist/release/*.zip
 
 ---
 
-## 三、网页版：托管在哪
+## 三、网页版：换一个不带 workbuddy 的地址
 
-| 方案 | 备案 | 国内可达 | 说明 |
+网页版是**纯静态**：24 MB、没有后端、没有数据库，不依赖任何一家服务的运行时。
+换托管只是把文件夹搬过去，代码一行不用改。两件事必须先记住：
+
+1. **必须部署在站点根路径**。`play/index.html` 里是 `/cdn/0.9.3/...` 绝对路径，pygbag 运行时
+   也是用 `location.origin + "/cdn/"` 拼索引地址。放到 `https://host/sneak_ai/` 这种子路径会 404。
+2. **不需要任何特殊响应头**。COOP/COEP 都不用（单线程 wasm 就能跑），实测 2.9 s 出画面。
+
+已经备好两个可直接上传的包：
+
+| 包 | 大小 | 内容 | 用途 |
 |---|---|---|---|
-| 现有工作台链接 | 不需要 | 可以 | 带 `?sharecode=`，适合发给朋友，不适合公开推 |
-| Cloudflare Pages | 不需要 | 一般能开 | 免费，推 git 即自动部署，可绑自定义域名 |
-| 腾讯云 COS + CDN | **要** | 快 | 静态网站托管必须绑已备案域名 |
-| Vercel / Netlify | 不需要 | 部分 ISP 不通 | 实测波动大，国内不建议做主入口 |
+| `dist/launch_web.zip` | 11.8 MB（展开 23.7 MB） | 落地页 + 网页版，**不含 exe**，下载按钮指向 GitHub Releases | 有单文件上限的托管（Cloudflare Pages 25 MB/文件） |
+| `dist/launch.zip` | 38.1 MB（展开 49.9 MB） | 上面 + 26.3 MB 便携包 | 对象存储 / Netlify 这类不限单文件大小的 |
 
-网页版产物在 `web_site/`（`python scripts/build_web.py` 生成，约 24 MB），
-是纯静态目录，丢到上面任何一个都行。**必须部署在站点根目录** ——
-`index.html` 里的资源路径是 `/cdn/...` 绝对路径。
+```bash
+python scripts/build_launch.py --web-only --zip    # → dist/launch_web.zip
+python scripts/build_launch.py --zip               # → dist/launch.zip
+```
+
+| 方案 | 备案 | 国内可达 | URL 形态 | 怎么弄 |
+|---|---|---|---|---|
+| **Cloudflare Pages** | 不需要 | 一般能开，偶尔慢 | `xxx.pages.dev` | 登录 → Workers & Pages → Create → Pages → Upload assets → 拖 `launch_web.zip`。免费，流量不限 |
+| **腾讯云 COS 静态网站** | 不需要（默认域名） | 快 | `<bucket>.cos-website.ap-guangzhou.myqcloud.com` | 桶里开「静态网站」功能，把解压后的文件传上去，索引文档填 `index.html`。国内最稳的免备案方案 |
+| **Netlify** | 不需要 | 波动大 | `xxx.netlify.app` | 拖 `launch.zip` 到 app.netlify.com/drop |
+| **GitHub Pages（用户主页）** | 不需要 | 不稳（DNS 干扰） | `lxb0957.github.io` | 必须建**用户主页仓库** `lxb0957.github.io` 才在根路径；建普通项目仓库会落到 `/sneak_ai/` 子路径，直接 404 |
+| **Vercel** | 不需要 | 经常不通 | `xxx.vercel.app` | 别用，`vercel.app` 域名在国内被墙的比例很高 |
+
+**结论**：想让全国的人都能稳定打开 → 走腾讯云 COS 静态网站（默认域名、免备案、国内节点）。
+只是发给朋友试玩、不追求国内速度 → Cloudflare Pages 最快，拖个 zip 就有链接。
 
 ---
 

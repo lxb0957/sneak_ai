@@ -21,8 +21,13 @@
    存成正常文件名，实测 Chrome / Edge / Firefox 都对。
 
 用法：
-    python scripts/build_launch.py            # 组装
+    python scripts/build_launch.py            # 组装 dist/launch/（含便携包，50 MB）
     python scripts/build_launch.py --check    # 只检查，不写
+    python scripts/build_launch.py --web-only # 组装 dist/launch_web/（不含 exe，24 MB）
+
+`--web-only` 是给 Cloudflare Pages 这类「单文件上限 25 MB」的托管用的：便携包 26.3 MB
+会超限，所以干脆不放，下载按钮改指向 GitHub Releases。上传这些平台用
+`dist/launch_web.zip`（见 --zip）。
 """
 
 from __future__ import annotations
@@ -62,10 +67,17 @@ def sync_tree(src: Path, dst: Path, skip: tuple[str, ...] = ()) -> None:
             shutil.copy2(item, target)
 
 
+GH_RELEASES = "https://github.com/lxb0957/sneak_ai/releases/latest"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true", help="只校验，不写盘")
+    ap.add_argument("--web-only", action="store_true", help="不含 26 MB 便携包（单文件上限 25 MB 的托管用）")
+    ap.add_argument("--zip", action="store_true", help="另外打一个 zip，方便网页版拖拽上传")
     args = ap.parse_args()
+
+    out = ROOT / "dist" / ("launch_web" if args.web_only else "launch")
 
     missing = [p for p in (WEB_SITE / "index.html", LANDING / "index.html") if not p.exists()]
     if missing:
@@ -74,25 +86,44 @@ def main() -> int:
         return 1
     zip_path = newest_release()
     print(f"网页版: {WEB_SITE}")
-    print(f"便携包: {zip_path.name} ({zip_path.stat().st_size / 1048576:.1f} MB)")
+    print(f"便携包: {zip_path.name} ({zip_path.stat().st_size / 1048576:.1f} MB)"
+          + ("（--web-only，不打包进去）" if args.web_only else ""))
     if args.check:
         return 0
 
-    sync_tree(LANDING, OUT, skip=("build", "assets", "sneak_ai"))
-    sync_tree(WEB_SITE, OUT / "play", skip=("cdn",))            # 坑 1：cdn 提到根
-    sync_tree(WEB_SITE / "cdn", OUT / "cdn")
-    (OUT / "play" / "web.tar.gz").unlink(missing_ok=True)       # 与 web.pkg 重复
-    if not (OUT / "cdn" / "0.9.3" / "pythons.js").exists():
+    sync_tree(LANDING, out, skip=("build", "assets", "sneak_ai"))
+    sync_tree(WEB_SITE, out / "play", skip=("cdn",))            # 坑 1：cdn 提到根
+    sync_tree(WEB_SITE / "cdn", out / "cdn")
+    (out / "play" / "web.tar.gz").unlink(missing_ok=True)       # 与 web.pkg 重复
+    if not (out / "cdn" / "0.9.3" / "pythons.js").exists():
         raise SystemExit("cdn/0.9.3/pythons.js 不在站点根，pygbag 会 404")
 
-    (OUT / "download").mkdir(parents=True, exist_ok=True)
-    shutil.copy2(zip_path, OUT / "download" / DL_NAME)          # 坑 2
+    if args.web_only:
+        # 落地页的下载按钮改成 GitHub Releases，别留一个 404 的本地路径
+        page = out / "index.html"
+        s = page.read_text(encoding="utf-8")
+        s = s.replace(
+            'href="download/stealth-protocol-win64" download="StealthProtocol-v1.8.14-win64.zip"',
+            f'href="{GH_RELEASES}"',
+            1,
+        )
+        s = s.replace("下载 Windows 版 · 26 MB", "下载 Windows 版", 1)
+        page.write_text(s, encoding="utf-8")
+    else:
+        (out / "download").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(zip_path, out / "download" / DL_NAME)      # 坑 2
 
-    size = sum(f.stat().st_size for f in OUT.rglob("*") if f.is_file())
-    print(f"\n组装完成: {OUT}  ({size / 1048576:.1f} MB)")
-    print("自检：")
-    print("  index.html 下载按钮 -> download/" + DL_NAME + ' + download="' + ZIP_NAME + '"')
-    print("  play/index.html 引用 -> /cdn/0.9.3/…（指向站点根）")
+    size = sum(f.stat().st_size for f in out.rglob("*") if f.is_file())
+    biggest = max((f.stat().st_size, f.name) for f in out.rglob("*") if f.is_file())
+    print(f"\n组装完成: {out}  ({size / 1048576:.1f} MB)")
+    print(f"  最大单文件: {biggest[1]} {biggest[0] / 1048576:.1f} MB")
+    print("  index.html 下载按钮 -> " + (GH_RELEASES if args.web_only else "download/" + DL_NAME))
+
+    if args.zip:
+        z = ROOT / "dist" / (out.name + ".zip")
+        z.unlink(missing_ok=True)
+        shutil.make_archive(str(z.with_suffix("")), "zip", root_dir=out)
+        print(f"  上传包: {z}  ({z.stat().st_size / 1048576:.1f} MB)")
     return 0
 
 
