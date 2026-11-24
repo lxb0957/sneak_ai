@@ -151,10 +151,11 @@
           <a class="btn btn-ghost" href="download/stealth-protocol-win64" download="StealthProtocol-v1.8.14-win64.zip">下载 Windows 版 · 26 MB</a>
         </div>
         <p class="steps">
-          <span>① 点开始游戏</span><span>② 等它下完 20 MB 运行时（20–30 秒）</span>
+          <span>① 点开始游戏</span><span>② 等十几秒装载，进度条会显示下到哪一步</span>
         </p>
-        <p class="hint">之后按 <kbd>Enter</kbd> 开局，<kbd>WASD</kbd> 走。要键盘和鼠标，<b>手机开不了</b>。<br>
-          想双击就玩，点「下载 Windows 版」—— 同一个游戏，不用等下载。</p>
+        <p class="hint">在这页多看几秒，运行时会在后台先下好一部分，点进去更快。<br>
+          之后按 <kbd>Enter</kbd> 开局，<kbd>WASD</kbd> 走。要键盘和鼠标，<b>手机开不了</b>。<br>
+          想双击就玩，点「下载 Windows 版」—— 同一个游戏，不用等。</p>
       </div>
       <div class="shot"><img src="shot-level.png" alt="游戏画面：第 1 关，HUD 显示用时、暴露条、体力与弹药"></div>
     </div>
@@ -242,7 +243,7 @@
       <div>
         <strong>浏览器版</strong>
         支持 WebAssembly 的现代浏览器（Chrome / Edge / Firefox / Safari 新版）。<br>
-        首次打开要下载约 20 MB 运行时、等 20–30 秒（看网速），之后秒开；<b>手机不能玩</b>，需要键盘鼠标。
+        首次打开要下载约 20 MB 运行时，通常十几秒；在这页停留几秒它会提前下好一部分，之后秒开。<b>手机不能玩</b>，需要键盘鼠标。
       </div>
     </div>
   </div>
@@ -273,6 +274,40 @@
     if (navigator.clipboard) navigator.clipboard.writeText(txt).then(done, function () { prompt('复制这个链接：', txt); });
     else prompt('复制这个链接：', txt);
   });
+
+  /* 点之前就开始下 —— 用户在落地页看介绍的这几秒，够把 11 MB 运行时下掉，
+     点进去时那部分直接命中 HTTP 缓存（服务端给了 max-age=600），不再是干等。
+     必须用 mode:'no-cors'：pygbag 自己就是这么取的（见 FETCH_FLAGS），
+     模式一致才能命中同一份缓存条目。 */
+  var warmed = false;
+  function warm() {
+    if (warmed) return;
+    // 触屏设备玩不了这个游戏（要键盘），预取纯属白耗流量和额度
+    if (window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches) return;
+    warmed = true;
+    var q = location.search || '';   // 工作台那条入口按 URL 上的 sharecode 放行
+    var base = 'cdn/0.9.3/';
+    [
+      base + 'cpython312/main.wasm',          // gzip 后 4.6 MB，最大的一块
+      base + 'cpython312/main.data',          // 6.4 MB，标准库
+      base + 'cpython312/main.js',
+      // 轮子版本跟随 pygbag，升级时要一起改；404 只是白跑一个请求，不影响游戏
+      base + 'cp312/pygame_ce-2.5.7-cp312-cp312-wasm32_bi_emscripten.whl',
+      base + 'pythons.js',
+      base + 'vt/xterm.js',
+      base + 'index-0.9.3-cp312.json',
+      'play/web.pkg'
+    ].forEach(function (u) {
+      fetch(u + q, { mode: 'no-cors', credentials: 'same-origin' }).catch(function () {});
+    });
+  }
+  var playBtn = document.getElementById('play');
+  if (playBtn) {
+    ['mouseenter', 'focus', 'touchstart'].forEach(function (ev) {
+      playBtn.addEventListener(ev, warm, { once: true, passive: true });
+    });
+  }
+  setTimeout(warm, 6000);   // 停留超过 6 秒说明真在看，也预取
 })();
 </script>
 

@@ -128,6 +128,21 @@ BODY_EXTRA = """<!-- [selfhost] 网页版体验补丁 -->
   html, body { margin: 0; background: #070b12 !important; color: #e6edf3; }
   #canvas:focus { outline: none; }
   #tp { display: none; }
+  /* 装载页：盖住 pygbag 那个写死 "Downloading..." 的终端，等 canvas 有画面自己退场 */
+  #ld { position: fixed; inset: 0; z-index: 2147483000; display: flex; align-items: center;
+        justify-content: center; background: #070b12; opacity: 1;
+        transition: opacity .45s ease; }
+  #ld .box { width: min(30em, 86vw); text-align: center; }
+  #ld h2 { margin: 0 0 .2em; font-size: 1.12em; font-weight: 600; color: #e6edf3; letter-spacing: .02em; }
+  #ld .sub { margin: 0 0 1.6em; font-size: .86em; color: #6d7f94; }
+  #ld .bar { height: 4px; border-radius: 2px; background: #16202e; overflow: hidden; }
+  #ld .bar i { display: block; height: 100%; width: 0; background: #3ea6ff;
+               border-radius: 2px; transition: width .3s linear; }
+  #ld .meta { margin-top: .8em; font-size: .82em; color: #8fa2b8; font-variant-numeric: tabular-nums; }
+  #ld .tip { margin: 2.2em 0 0; min-height: 3.2em; font-size: .9em; line-height: 1.65;
+             color: #b6c7da; transition: opacity .26s ease; }
+  #ld .tip b { color: #ffd479; font-weight: 600; }
+  #ld .foot { margin-top: 1.4em; font-size: .76em; color: #55677c; }
   @media (hover: none) and (pointer: coarse) {
     #tp { display: flex; position: fixed; inset: 0; z-index: 2147483647;
           background: #0b1220; color: #e6edf3; align-items: center; justify-content: center;
@@ -139,6 +154,14 @@ BODY_EXTRA = """<!-- [selfhost] 网页版体验补丁 -->
                  border-radius: 8px; background: #16202e; color: #cfe0f0; font-size: .95em; cursor: pointer; }
   }
 </style>
+<div id="ld"><div class="box">
+  <h2>正在装载运行时</h2>
+  <p class="sub">第一次打开要把 Python 解释器下到浏览器里</p>
+  <div class="bar"><i id="ld-bar"></i></div>
+  <p class="meta" id="ld-meta">正在连接…</p>
+  <p class="tip" id="ld-tip"></p>
+  <p class="foot">之后再打开就是秒开 · 需要键盘和鼠标</p>
+</div></div>
 <div id="tp"><div class="box">
   <h2>这个游戏需要键盘和鼠标</h2>
   <p>当前设备是触屏，没有 WASD 移动和鼠标瞄准，暂时玩不了。</p>
@@ -172,21 +195,78 @@ BODY_EXTRA = """<!-- [selfhost] 网页版体验补丁 -->
   var go = document.getElementById('tp-go');
   if (go) go.addEventListener('click', function () { tp.style.display = 'none'; grab(); });
 
-  // 4) pygbag 模板的 #status 写死 "Downloading..."，进度条几乎不动。
-  //    整包约 30 MB 时用户完全看不出是在下载还是卡死。
-  var el = document.getElementById('status');
-  if (!el) return;
+  // 4) 装载页。pygbag 模板的 #status 写死 "Downloading..."、进度条几乎不动，
+  //    用户既不知道总共要下多少，也不知道是在下载还是已经卡死。
+  //    这里给真实字节数 + 阶段判断，顺便把等待时间换成有用的话。
+  var ld = document.getElementById('ld');
+  var ldBar = document.getElementById('ld-bar');
+  var ldMeta = document.getElementById('ld-meta');
+  var ldTip = document.getElementById('ld-tip');
+  var statusEl = document.getElementById('status');
+
+  var TIPS = [
+    '按住 <b>Shift</b> 是潜行，脚步没声音。松开就是跑，跑起来整条走廊都听得见。',
+    '按 <b>F1</b> 能看见每个哨兵的视野锥和听觉圈，不用猜他在看哪。',
+    '被看见了先别跑。找掩体蹲下把视线断掉，他会自己走回去搜。',
+    '扔石头能把人引开，但他们会记住石头落在哪，回来时比刚才更警觉。',
+    '体力见底就站着别动，几秒回满。冲刺是用来脱身的，不是用来赶路的。',
+    '按键没反应，先在画面里点一下 —— 键盘焦点要给到游戏。'
+  ];
+  var tipIndex = 0;
+  if (ldTip) {
+    ldTip.innerHTML = TIPS[0];
+    setInterval(function () {
+      tipIndex = (tipIndex + 1) % TIPS.length;
+      ldTip.style.opacity = 0;
+      setTimeout(function () { ldTip.innerHTML = TIPS[tipIndex]; ldTip.style.opacity = 1; }, 260);
+    }, 4200);
+  }
+
+  var TOTAL = 12 * 1048576;        // 线上 gzip 后实测约 11.3 MB，留余量免得进度条提前满了
   var sum = 0, t0 = performance.now(), lastSum = -1, stillSince = performance.now();
+  var dismissed = false;
+
+  function leave() {
+    if (dismissed || !ld) return;
+    dismissed = true;
+    ld.style.opacity = 0;
+    setTimeout(function () { if (ld.parentNode) ld.remove(); }, 480);
+  }
+
   function paint() {
     var now = performance.now();
     if (sum !== lastSum) { lastSum = sum; stillSince = now; }
     var s = Math.round((now - t0) / 1000);
     var idle = Math.round((now - stillSince) / 1000);
     var mb = sum / 1048576;
-    var head = (mb > 0.05) ? 'Downloading... ' + mb.toFixed(1) + ' MB' : 'Loading...';
-    // 字节数不再增长 = 已进入解压 / wasm 编译阶段（纯 CPU，没有网络事件）
-    el.textContent = head + (idle > 4 ? '，正在解压与编译 (' + s + 's)' : '  (' + s + 's)');
+    var pct = Math.min(100, Math.round(sum / TOTAL * 100));
+    var msg;
+
+    if (ldBar) ldBar.style.width = pct + '%';
+    if (mb < 0.05) {
+      // 一个字节都没动：要么还在建连，要么这些文件已被落地页预取好、直接走缓存
+      msg = idle > 4 ? '运行时已在缓存里，正在编译 (' + s + 's)'
+                     : '正在连接… (' + s + 's)';
+    } else if (pct >= 100) {
+      // 没开 gzip 的服务器（本地预览）会超过预估总量，别显示成 120%
+      msg = '已下 ' + mb.toFixed(1) + ' MB，收尾中 (' + s + 's)';
+    } else if (idle > 5) {
+      msg = '已下 ' + mb.toFixed(1) + ' MB，还在等 (' + s + 's)';
+    } else {
+      msg = '已下 ' + mb.toFixed(1) + ' MB / 约 11 MB · ' + pct + '% · ' + s + 's';
+    }
+    if (ldMeta) ldMeta.textContent = msg;
+    if (statusEl) statusEl.textContent = msg;     // 装载页万一没挂上，还有这行兜底
   }
+
+  // 画面真的出来了才退场：pygbag 的 canvas 一开始就存在，但 width 是 1。
+  // 再多留 0.9 秒 —— width 刚变时主菜单往往还没画完，慢机器上会闪一下黑屏。
+  var watch = setInterval(function () {
+    var c = document.querySelector('canvas');
+    if (c && c.width > 1) { clearInterval(watch); setTimeout(leave, 900); }
+  }, 400);
+  setTimeout(function () { clearInterval(watch); leave(); }, 120000);   // 兜底，别永久挡住
+
   if (window.PerformanceObserver) {
     try {
       new PerformanceObserver(function (list) {
