@@ -6,17 +6,21 @@
 ![零外部素材](https://img.shields.io/badge/assets-100%25%20procedural-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-从零手写游戏 AI 决策栈的 2D 潜行沙盒。五关连续潜入，目标是做出一套能在面试里讲出技术深度的 AI 系统，而不是调包跑 demo。
+五个关卡的 2D 潜行游戏，十七个哨兵各算各的账。
 
-> **核心定位**：不用任何现成 AI 库（无 stable-baselines3、无现成行为树/寻路库），感知、决策、寻路、协同全部从零实现。每一个模块都能被面试官往深处追问。
+起因很具体。GOAP、流场寻路、行为树这些词我看了很多篇文章，每篇都看得懂，
+但说不清哪一层真正决定了一个敌人聪不聪明。索性拆开重写一遍，一层一层加：
+先让它会怀疑，再让它会搜、会叫人，每加一层就跑一批种子看胜率动没动。
+
+所以这里面没有任何现成 AI 库。不是为了证明什么，是拆开写过才知道每个 `if` 为什么在那儿。
 
 > **不想装 Python？** [下载 Windows 免安装版](https://lxb0957.github.io/download/StealthProtocol-v1.8.14-win64.zip)（26 MB 单文件，双击即玩，存档 `records.json` 就写在 exe 旁边），
-> 或者 **[直接在浏览器里玩](https://lxb0957.github.io/)**（同一份代码编到 WebAssembly，首次打开要等 20–30 秒（首次要下 20 MB 运行时）；手机不能玩，需要键鼠）。
+> 或者 **[直接在浏览器里玩](https://lxb0957.github.io/)**（同一份代码编到 WebAssembly。第一次要下 20 MB 运行时，等半分钟；手机不能玩，要有键盘鼠标）。
 > 打不开 `github.io` 的话走备用入口 **[stealth-protocol.app.workbuddy.host](https://stealth-protocol.app.workbuddy.host/?sharecode=777DHSP3EJ)**（同一份产物）。
 > 用 macOS / Linux？**源码可以在三个平台跑**（`pip install -r requirements.txt && python launch.py`，中文字体走跨平台回退链），
 > 但二进制只发 Windows —— 没签名的 mac 包双击会被 Gatekeeper 拦下，不如不发。
-> 这条和另外两笔账（第 4 关的 24%、窄段两侧没有掩体）都写在 [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) 里，
-> **每一条都附了"怎么复查"**：这份项目的"已知问题"不是传闻，是查过之后认下来的。
+> 这几笔账（第 4 关的 24%、窄段两侧没有掩体、Linux 字体）都写在 [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) 里，
+> 每条附了复查命令和当时量的数。不是「据说有问题」，是自己量过、算过、决定不修的。
 
 ## 演示
 

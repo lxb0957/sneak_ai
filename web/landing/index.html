@@ -42,6 +42,7 @@
   h1 small { display: block; margin-top: 8px; font-size: 15px; font-weight: 400; color: var(--dim); letter-spacing: .12em; }
   .lead { margin: 18px 0 0; color: #b6c2d0; font-size: 16.5px; }
   .lead b { color: var(--ink); font-weight: 600; }
+  .lead + .lead { margin-top: 9px; color: #9fadbc; }
 
   .cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
   .btn {
@@ -91,6 +92,11 @@
   }
   .card h3 { margin: 0 0 8px; font-size: 16px; color: var(--blue); }
   .card p { margin: 0; font-size: 14.5px; color: #a7b3c2; line-height: 1.72; }
+  .card.bad h3 { color: #d8a05e; }
+  .sub code {
+    padding: 1px 6px; border-radius: 4px; background: #16222f; border: 1px solid #26364a;
+    font-family: ui-monospace, Consolas, monospace; font-size: 13px; color: #c3cfdc;
+  }
 
   table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
   th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--line); }
@@ -130,22 +136,25 @@
   <div class="wrap">
     <div class="hero">
       <div>
-        <span class="tag">打开网页就能玩 · 不用下载</span>
+        <span class="tag">点开就玩 · 不用下载</span>
         <h1>潜行协议<small>STEALTH PROTOCOL</small></h1>
         <p class="lead">
-          一个从零手写的 2D 潜行沙盒。敌人不是照着脚本巡逻的木桩 ——
-          <b>视觉锥、听觉半径、最后已知位置、GOAP 决策、流场寻路、小队包抄</b>
-          全部自己实现，所以它会记、会找、会叫支援。
+          第 1 关有十七个哨兵。你扔一颗石头，最近的两三个会过去看。
+          去的是哪几个不是随机挑的，是谁离得近、谁手上正好没活。
+        </p>
+        <p class="lead">
+          石头能空出一段路，但只空一会儿。那几个人回来之后记得石头的方向，
+          所以引开一个，你的退路就多一个人知道。
         </p>
         <div class="cta">
           <a class="btn btn-primary" id="play" href="play/">▶ 开始游戏</a>
           <a class="btn btn-ghost" href="download/stealth-protocol-win64" download="StealthProtocol-v1.8.14-win64.zip">下载 Windows 版 · 26 MB</a>
         </div>
         <p class="steps">
-          <span>① 点开始游戏</span><span>② 等它下完 20 MB 运行时（20–30 秒）</span><span>③ 按 <kbd>Enter</kbd>，<kbd>WASD</kbd> 移动</span>
+          <span>① 点开始游戏</span><span>② 等它下完 20 MB 运行时（20–30 秒）</span>
         </p>
-        <p class="hint">浏览器版第一次打开要下载约 20 MB 运行时，之后秒开。<br>
-          需要键盘和鼠标 —— <b>手机上玩不了</b>；想双击就玩，用右边的 exe。</p>
+        <p class="hint">之后按 <kbd>Enter</kbd> 开局，<kbd>WASD</kbd> 走。要键盘和鼠标，<b>手机开不了</b>。<br>
+          想双击就玩，点「下载 Windows 版」—— 同一个游戏，不用等下载。</p>
       </div>
       <div class="shot"><img src="shot-level.png" alt="游戏画面：第 1 关，HUD 显示用时、暴露条、体力与弹药"></div>
     </div>
@@ -154,28 +163,49 @@
 
 <div class="wrap">
   <div class="stats">
-    <div class="stat"><div class="n">5 关</div><div class="k">纯手工关卡，无随机生成</div></div>
-    <div class="stat"><div class="n">17 名</div><div class="k">第一关在岗哨兵，各有视野与巡逻</div></div>
-    <div class="stat"><div class="n">0 依赖</div><div class="k">纯 Python + pygame，AI 无第三方库</div></div>
+    <div class="stat"><div class="n">5 关</div><div class="k">一张一张画的，不是随机生成</div></div>
+    <div class="stat"><div class="n">17 名</div><div class="k">第 1 关在岗的哨兵，各走各的路线</div></div>
+    <div class="stat"><div class="n">0 个 AI 库</div><div class="k">感知、决策、寻路都是自己写的</div></div>
   </div>
 </div>
 
 <section>
   <div class="wrap">
-    <h2>AI 是真的在思考<span>不是巡逻脚本</span></h2>
-    <p class="sub">每个哨兵每帧都在算：我现在看见了什么、刚才听到的声音该不该信、追丢了往哪找、要不要喊人。</p>
+    <h2>它不知道你在哪，但它会去猜<span>三个片段</span></h2>
+    <p class="sub">每个哨兵每次都在心里过一遍四件事：看见了什么、刚听见的要不要信、追丢了往哪找、要不要叫人。</p>
     <div class="grid3">
       <div class="card">
-        <h3>它会怀疑</h3>
-        <p>看见模糊的影子不是立刻开枪，而是走上来确认。怀疑值会累积、会衰减，被你连续晃三次就真警觉了。</p>
+        <h3>先怀疑一下</h3>
+        <p>在视野边上晃过，它不会开枪，会往这边走两步看清楚。晃三次它就认定了；中间隔久了，它会忘。</p>
       </div>
       <div class="card">
-        <h3>它会搜</h3>
-        <p>追丢之后不是原地复位，而是去"最后一次看见你"的位置附近沿房间搜索，再慢慢扩散到相邻区域。</p>
+        <h3>追丢了，它去找</h3>
+        <p>它记得你最后消失的那一格。然后当场排个顺序，把附近房间按脚程从短到长走一遍。这个顺序每一局都不一样，不是摆好的。</p>
       </div>
       <div class="card">
-        <h3>它会喊人</h3>
-        <p>发现目标会通知半径内的同伴，同伴转而包抄你的退路。有人倒地时，最近的哨兵会离开岗位去查看。</p>
+        <h3>但它也会叫人</h3>
+        <p>喊一嗓子，周围的人都往你退路上压。所以最麻烦的往往不是看见你的那个，是它叫来的那几个。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>翻过的几回车<span>都没修</span></h2>
+    <p class="sub">下面每条都能重跑复现，理由和复查命令在 <code>docs/KNOWN_ISSUES.md</code> 里。</p>
+    <div class="grid3">
+      <div class="card bad">
+        <h3>26 块掩体，只画出 19 块</h3>
+        <p>加掩体的规则是「整块里只要有一格是墙，整块跳过」，跳过时一声不响。少掉的 7 块全在第 4 关最需要掩体的窄段两边。存在了好几个版本没人发现，因为任何测试都不会红。</p>
+      </div>
+      <div class="card bad">
+        <h3>第 4 关，机器人胜率 24%</h3>
+        <p>改了九次地图，九次更差，最惨的一次是 0%。后来算明白了：满体力冲刺 2.94 秒，相对速度 2 格/秒，最多拉开 5.9 格，而视野半径 6.5 格。也就是说「被看见之后跑掉」在这一关不成立，现在靠辅助模式兜底。</p>
+      </div>
+      <div class="card bad">
+        <h3>1.29% 的视线能隔墙看见</h3>
+        <p>视线原来按固定步长采样，会整格跳过墙。改成精确步进之后，另外四关胜率上移 9 到 18 个点，第 4 关只动了 1 个点。它的瓶颈从来不是「被看见得太早」。</p>
       </div>
     </div>
   </div>
@@ -184,7 +214,7 @@
 <section>
   <div class="wrap">
     <h2>怎么玩<span>键盘 + 鼠标</span></h2>
-    <p class="sub">目标是走到绿色标记的数据终端。被发现的次数越少、用时越短，结算评价越高。</p>
+    <p class="sub">活着走到绿色终端就算过。被发现几次、用了多久，最后折成分和评级。硬闯也能通关，分数会很难看。</p>
     <table>
       <tr><th>按键</th><th>动作</th></tr>
       <tr><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></td><td>移动</td></tr>
@@ -202,7 +232,7 @@
 <section>
   <div class="wrap">
     <h2>配置要求</h2>
-    <p class="sub">老机器也能跑，核显足够。</p>
+    <p class="sub">核显就够，几年前的笔记本也能跑。</p>
     <div class="req">
       <div>
         <strong>Windows 桌面版（推荐）</strong>
@@ -221,7 +251,7 @@
 <footer>
   <div class="wrap">
     开源项目：<a href="https://github.com/lxb0957/sneak_ai">github.com/lxb0957/sneak_ai</a>
-    · 纯 Python + pygame-ce，AI、寻路、关卡全部手写，没有用现成引擎。
+    · 只 pip 了 pygame-ce，图和音效都是代码画的，没有一个素材文件。
     · <a href="#" id="share">复制分享链接</a>
   </div>
 </footer>

@@ -263,10 +263,8 @@ TABLE = {
     "    · 辅助模式不记纪录": "    · assist runs are not recorded",
     "    · 跳关只记本关成绩，不进总榜":
         "    · starting from a level only records that level",
-    "连续潜入 ": "Infiltrate ",
-    " 处设施，拿到数据，活着回来。":
-        " facilities, take the data, come back alive.",
     "　· 辅助：敌人更弱，成绩不记": " · Assist: weaker guards, no records",
+    " 处设施，一趟走完。": " facilities, one run.",
     "最佳纪录  ": "Best  ",
     "WASD 移动 · Shift 潜行 · Space 冲刺 · 左键 射击":
         "WASD move · Shift sneak · Space sprint · LMB shoot",
@@ -351,14 +349,14 @@ TABLE = {
     "被抓": "Caught",
     "抵达撤离点": "Reached exfil",
     # ---- 教学提示 ----
-    "被看见了：Shift 蹲进掩体，断掉视线他就会回去搜 —— 硬跑跑不过":
-        "Seen: Shift into cover. Break his line of sight and he will search — "
-        "you cannot outrun him",
-    "体力空了：站着不动会回满 —— 冲刺是用来脱身的，不是用来赶路的":
-        "Out of stamina: stand still and it refills — sprint is for escaping, "
-        "not travelling",
-    "数据到手，警报会响 —— 这时候该往撤离点走，不是继续摸补给":
-        "Data secured, the alarm will sound — head for exfil, not for supplies",
+    "被看见了。按 Shift 蹲进掩体，把视线断掉，他会自己回去搜。跑是跑不过的。":
+        "Spotted. Shift into cover, break his line of sight and he will go back "
+        "to searching. You cannot outrun him",
+    "体力见底了。原地站住，它会慢慢回满。冲刺只用来逃命，别拿来赶路。":
+        "Out of stamina. Stand still and it refills. Save the sprint for escaping, "
+        "not for getting around",
+    "数据拿到了，警报会响。现在往撤离点走，别再翻补给。":
+        "Data secured, the alarm will sound. Head for exfil now, stop looting",
     "前往绿色标记的数据终端 —— 蹲下（Shift）移动更安静":
         "Go to the green data terminal — Shift to move quietly",
     "　·　两个舱都要摸": " · Both rooms need hitting",
@@ -439,8 +437,7 @@ TEMPLATES = {
     "第{0}关｜{1}": "L{0} | {1}",
     "累计用时 {0} 秒    被发现 {1} 次    弹药 {2} · 石子 {3}":
         "Total {0} s    spotted {1}×    ammo {2} · stones {3}",
-    "连续潜入 {0} 处设施，拿到数据，活着回来。":
-        "Infiltrate {0} facilities, take the data, come back alive.",
+    "{0} 处设施，一趟走完。": "{0} facilities, one run.",
     # 风格分明细行："全身而退  +120" / "零击倒  +80"
     "{0}  +{1}": "{0}  +{1}",
     # 被分隔符切开后的片段："A 评级" / "最佳纪录  1200 分"
