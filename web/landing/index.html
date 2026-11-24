@@ -57,7 +57,7 @@
   .btn-ghost { background: #111b28; color: var(--ink); border-color: var(--line); }
   .btn-ghost:hover { background: #16222f; border-color: #2a3a4d; }
   .hint { margin-top: 14px; font-size: 13.5px; color: var(--dim); }
-  .hint b { color: #c3cfdc; }
+  .hint b { color: #c3cfdc; white-space: nowrap; }   /* 窄屏别把「手机开不了」拆成两行 */
   .steps { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 20px 0 0;
            font-size: 13px; color: #94a3b5; letter-spacing: .01em; }
   .steps span { white-space: nowrap; }
@@ -143,7 +143,7 @@
           去的是哪几个不是随机挑的，是谁离得近、谁手上正好没活。
         </p>
         <p class="lead">
-          石头能空出一段路，但只空一会儿。那几个人回来之后记得石头的方向，
+          石头能空出一段路，但只空一会儿。那几个人回来之后记得石头落在哪，
           所以引开一个，你的退路就多一个人知道。
         </p>
         <div class="cta">
