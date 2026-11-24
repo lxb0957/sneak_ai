@@ -6,38 +6,59 @@
 
 ---
 
-## 零、当前线上入口（2026-11-23 已上线）
+## 零、当前线上入口（2026-11-24 换到干净域名）
 
 **对外只发这一个链接**：
 
 ```
-https://stealth-protocol.app.workbuddy.host/?sharecode=777DHSP3EJ
+https://lxb0957.github.io/
 ```
 
-一页收口三件事，不需要再给第二个地址：
+不带分享码、不带任何参数，一页收口三件事：
 
 | 路径 | 内容 | 实现 |
 |---|---|---|
 | `/` | 落地页（首屏、AI 说明、按键表、配置要求） | `web/landing/index.html` |
 | `/play/` | 浏览器直接玩（pygbag / CPython wasm） | `web_site/` 全量搬进 `play/`，`cdn/` 提到站点根 |
-| `/download/stealth-protocol-win64` | Windows 便携包 26 MB | `dist/release/*.zip` 改名去掉 `.zip` |
+| `/download/StealthProtocol-v1.8.14-win64.zip` | Windows 便携包 26 MB，同源直下 | `dist/release/*.zip` 原名 |
 
-产物目录：`dist/launch/`（51 MB 打包上传）。重新发布：
+托管是 GitHub Pages **用户主页仓库** `lxb0957/lxb0957.github.io`（main 分支、根目录）。
+产物目录 `dist/pages/`，重新发布：
 
 ```bash
 python scripts/build_web.py --verify          # 重建网页版 → web_site/
 python build_exe.py                           # 重建便携包（若有改动）→ dist/release/
-# 组装 dist/launch/：landing + play/(=web_site) + cdn/(从 play/ 提出来) + download/
-# 然后用发布工具重新部署 dist/launch/
+python scripts/build_launch.py --pages        # 组装 dist/pages/（含 exe + .nojekyll）
+cd dist/pages && git add -A && git commit -m "deploy" && git push
 ```
 
-**为什么下载文件没有 `.zip` 后缀**：托管网关前置了腾讯云 WAF，`.zip` / `.rar` / `.7z`
-（含 `.ZIP` 大写、`x.zip.apk` 这种复合名）一律返回 403 WAF 拦截页，`.apk` / `.pkg` /
-`.exe` / 无扩展名全部放行。所以文件挂在无扩展名路径上，靠 `<a download="…zip">` 让浏览器
-存成正常文件名（Chrome / Edge / Firefox 实测保存名正确）。探测方法：请求一个**不存在**的
-`/probe/x.<ext>`，404 = 放行，403 = 被 WAF 拦。
+**为什么必须是「用户主页仓库」而不是项目页**：pygbag 运行时用
+`location.origin + "/cdn/..."` 拼索引 json 地址，跟 `index.html` 里的写法无关，所以站点
+必须落在域名根路径。`lxb0957.github.io/sneak_ai/` 这种子路径一定 404 —— 相对路径绕不过去，
+地址在 wasm 里的 Python 代码里写死成 origin 根。
 
-**分享码必须跟着导航走**：网关认的是「导航 URL 上的 `?sharecode=`」，只靠它种下的
+**`.nojekyll` 不能漏**：GitHub Pages 默认跑 Jekyll，`_` 开头的文件/目录会被吞掉。
+`--pages` 会自动生成这个空文件。
+
+实测（本机国内网络 `curl --noproxy '*'`，不走代理）：首页 / `play/` / `pythons.js` /
+`main.wasm` / `main.data` / `index-*.json` / `web.pkg` / 26 MB zip **全部 200**；
+`main.wasm` 的 `Content-Type: application/wasm`（GitHub Pages 原生支持，不需要额外配置）；
+TLS 握手 0.2 s；26 MB 便携包下载 **697 KB/s**（约 40 秒）。
+
+浏览器全链路也验过：落地页 → 点「开始游戏」→ `/play/`（地址里没有 sharecode）→
+canvas 1024×768 → 主菜单 → 回车进第 1 关（HUD「在岗 17/17、被发现 0 次」正常）。
+唯一 4xx 是上游本来就没打的 `browserfs.min.js`，无害。
+
+### 备用入口（github.io 被拦时用）
+
+```
+https://stealth-protocol.app.workbuddy.host/?sharecode=777DHSP3EJ
+```
+
+同一份产物，WorkBuddy 托管。这条**必须带 `?sharecode=`**，裸域名 403。它身上有两个坑，
+只在用备用入口时需要注意：
+
+**1. 分享码必须跟着导航走**：网关认的是「导航 URL 上的 `?sharecode=`」，只靠它种下的
 `__wb_rsc` cookie **不够** —— 页面里普通的 `fetch(..., {credentials:'same-origin'})` 能过，
 但 wasm 运行时发的那些请求（不带 `sec-fetch-*`）会被 403，表现是从落地页点进 `/play/`
 之后永远停在 1×1 的空 canvas 上。所以落地页有一段脚本把首屏查询串原样带到游戏页：
@@ -46,7 +67,12 @@ python build_exe.py                           # 重建便携包（若有改动�
 if (a && location.search) a.href = 'play/' + location.search;   // → /play/?sharecode=…
 ```
 
-同理，对外发的链接**必须带 `?sharecode=`**，裸域名会 403。
+**2. 那边的下载文件没有 `.zip` 后缀**：网关前置了腾讯云 WAF，`.zip` / `.rar` / `.7z`
+（含 `.ZIP` 大写、`x.zip.apk` 这种复合名）一律返回 403 WAF 拦截页，`.apk` / `.pkg` /
+`.exe` / 无扩展名全部放行。所以那边文件挂在无扩展名路径 `download/stealth-protocol-win64` 上，
+靠 `<a download="…zip">` 让浏览器存成正常文件名。探测方法：请求一个**不存在**的
+`/probe/x.<ext>`，404 = 放行，403 = 被 WAF 拦。（GitHub Pages 没有这道墙，所以 `--pages`
+产出的是正常 `.zip`。）
 
 ---
 
@@ -124,30 +150,38 @@ python scripts/cos_upload.py                         # 上传 dist/release/*.zip
 
 1. **必须部署在站点根路径**。`play/index.html` 里是 `/cdn/0.9.3/...` 绝对路径，pygbag 运行时
    也是用 `location.origin + "/cdn/"` 拼索引地址。放到 `https://host/sneak_ai/` 这种子路径会 404。
-2. **不需要任何特殊响应头**。COOP/COEP 都不用（单线程 wasm 就能跑），实测 2.9 s 出画面。
+2. **不需要任何特殊响应头**。COOP/COEP 都不用（单线程 wasm 就能跑）。
 
-已经备好两个可直接上传的包：
+### 已经选定的方案：GitHub Pages 用户主页
+
+`https://lxb0957.github.io/` —— 地址干净、免备案、免账号操作，`scripts/build_launch.py --pages`
+一条命令出 `dist/pages/`，push 就上线（细节见第零章）。
+
+| 方案 | 备案 | 本机国内直连实测（`curl --noproxy`） | URL 形态 | 备注 |
+|---|---|---|---|---|
+| **GitHub Pages（用户主页）** ✅ 在用 | 不需要 | 全站 200，TLS 0.2 s，下载 697 KB/s | `lxb0957.github.io` | 必须建**用户主页仓库** `lxb0957.github.io` 才在根路径；`.nojekyll` 不能漏 |
+| Cloudflare Pages | 不需要 | `*.pages.dev` 可达（522 是回源问题，不是被墙） | `xxx.pages.dev` | 有 25 MB/文件上限，用 `dist/launch_web.zip` |
+| 腾讯云 COS 静态网站 | 默认域名免备案 | 快 | `<bucket>.cos-website.ap-guangzhou.myqcloud.com` | ⚠️ **默认域名对 HTML 强制 `Content-Disposition: attachment`**（防盗链钓鱼），网页会被下载而不是打开；真要托管网页必须绑**已备案域名**。COS 的正确用途是放 exe 下载 |
+| Netlify | 不需要 | **`app.netlify.com` 直连 000，完全不通** | `xxx.netlify.app` | 实测不行，别当主入口 |
+| Vercel | 不需要 | 经常不通 | `xxx.vercel.app` | `vercel.app` 在国内被拦比例很高 |
+
+备好的两个上传包（给不肯用 GitHub 的场合）：
 
 | 包 | 大小 | 内容 | 用途 |
 |---|---|---|---|
 | `dist/launch_web.zip` | 11.8 MB（展开 23.7 MB） | 落地页 + 网页版，**不含 exe**，下载按钮指向 GitHub Releases | 有单文件上限的托管（Cloudflare Pages 25 MB/文件） |
-| `dist/launch.zip` | 38.1 MB（展开 49.9 MB） | 上面 + 26.3 MB 便携包 | 对象存储 / Netlify 这类不限单文件大小的 |
+| `dist/launch.zip` | 38.1 MB（展开 49.9 MB） | 上面 + 26.3 MB 便携包 | 对象存储这类不限单文件大小的 |
 
 ```bash
 python scripts/build_launch.py --web-only --zip    # → dist/launch_web.zip
 python scripts/build_launch.py --zip               # → dist/launch.zip
+python scripts/build_launch.py --pages             # → dist/pages/（GitHub Pages 用）
 ```
 
-| 方案 | 备案 | 国内可达 | URL 形态 | 怎么弄 |
-|---|---|---|---|---|
-| **Cloudflare Pages** | 不需要 | 一般能开，偶尔慢 | `xxx.pages.dev` | 登录 → Workers & Pages → Create → Pages → Upload assets → 拖 `launch_web.zip`。免费，流量不限 |
-| **腾讯云 COS 静态网站** | 不需要（默认域名） | 快 | `<bucket>.cos-website.ap-guangzhou.myqcloud.com` | 桶里开「静态网站」功能，把解压后的文件传上去，索引文档填 `index.html`。国内最稳的免备案方案 |
-| **Netlify** | 不需要 | 波动大 | `xxx.netlify.app` | 拖 `launch.zip` 到 app.netlify.com/drop |
-| **GitHub Pages（用户主页）** | 不需要 | 不稳（DNS 干扰） | `lxb0957.github.io` | 必须建**用户主页仓库** `lxb0957.github.io` 才在根路径；建普通项目仓库会落到 `/sneak_ai/` 子路径，直接 404 |
-| **Vercel** | 不需要 | 经常不通 | `xxx.vercel.app` | 别用，`vercel.app` 域名在国内被墙的比例很高 |
-
-**结论**：想让全国的人都能稳定打开 → 走腾讯云 COS 静态网站（默认域名、免备案、国内节点）。
-只是发给朋友试玩、不追求国内速度 → Cloudflare Pages 最快，拖个 zip 就有链接。
+**一个绕不过去的事实**：`github.io` 在国内不同运营商/地区的可达性有差异，本机能直连不等于
+全国都能直连。所以对外发链接时**同时给备用入口**（WorkBuddy 那条），文案见
+`assets/posts/05-share-web.txt` 的「对方说打不开时」一节。要 100% 可控只有一条路：
+买域名 + 备案 + 国内 CDN，那是另一笔成本，不是技术问题。
 
 ---
 

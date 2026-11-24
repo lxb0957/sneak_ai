@@ -10,8 +10,9 @@
 
 > **核心定位**：不用任何现成 AI 库（无 stable-baselines3、无现成行为树/寻路库），感知、决策、寻路、协同全部从零实现。每一个模块都能被面试官往深处追问。
 
-> **不想装 Python？** [下载 Windows 免安装版](https://github.com/lxb0957/sneak_ai/releases/latest)（28 MB 单文件，双击即玩，存档 `records.json` 就写在 exe 旁边），
-> 或者 **[直接在浏览器里玩](https://stealth-protocol.app.workbuddy.host/?sharecode=777DHSP3EJ)**（同一份代码编到 WebAssembly，首次打开要等 15–20 秒；手机不能玩，需要键鼠）。
+> **不想装 Python？** [下载 Windows 免安装版](https://lxb0957.github.io/download/StealthProtocol-v1.8.14-win64.zip)（26 MB 单文件，双击即玩，存档 `records.json` 就写在 exe 旁边），
+> 或者 **[直接在浏览器里玩](https://lxb0957.github.io/)**（同一份代码编到 WebAssembly，首次打开要等 10–15 秒；手机不能玩，需要键鼠）。
+> 打不开 `github.io` 的话走备用入口 **[stealth-protocol.app.workbuddy.host](https://stealth-protocol.app.workbuddy.host/?sharecode=777DHSP3EJ)**（同一份产物）。
 > 用 macOS / Linux？**源码可以在三个平台跑**（`pip install -r requirements.txt && python launch.py`，中文字体走跨平台回退链），
 > 但二进制只发 Windows —— 没签名的 mac 包双击会被 Gatekeeper 拦下，不如不发。
 > 这条和另外两笔账（第 4 关的 24%、窄段两侧没有掩体）都写在 [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) 里，

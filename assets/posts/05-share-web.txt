@@ -1,13 +1,17 @@
 ===== 直接把链接发给别人（唯一需要的一行） =====
-https://stealth-protocol.app.workbuddy.host/?sharecode=777DHSP3EJ
+https://lxb0957.github.io/
 
-链接必须带 ?sharecode=777DHSP3EJ —— 少了它访问会被网关 403。
-落地页右下角有「复制分享链接」，从页面复制出来的一定是完整的。
+干净地址，不带分享码、不带任何参数，复制粘贴就能用。
+在线玩点「开始游戏」，下载点「下载 Windows 版」，都在这一页里。
+
+备用入口（github.io 打不开时才用）：
+https://stealth-protocol.app.workbuddy.host/?sharecode=777DHSP3EJ
+这条**必须带 ?sharecode=777DHSP3EJ**，少了会被 403，转发时容易丢。
 
 
 ===== 微信 / QQ 群里发（短，别吓跑人） =====
 自己写的个 2D 潜行游戏，打开网页就能玩，不用下载：
-https://stealth-protocol.app.workbuddy.host/?sharecode=777DHSP3EJ
+https://lxb0957.github.io/
 
 第一次打开要等 10-15 秒（在下 Python 运行时），之后秒开。
 需要键盘鼠标，手机上玩不了。回车开始，WASD 移动，按住 Shift 是潜行。
@@ -15,23 +19,32 @@ https://stealth-protocol.app.workbuddy.host/?sharecode=777DHSP3EJ
 
 
 ===== 论坛 / 贴吧 / V2EX 那种能写字的场合 =====
-从零手写的 2D 潜行沙盒，浏览器里直接玩：
-https://stealth-protocol.app.workbuddy.host/?sharecode=777DHSP3EJ
+从零手写的 2D 潜行沙盒，浏览器里直接玩（也可以下 Windows 免安装版）：
+https://lxb0957.github.io/
 
 技术上值得看的是敌人不是「巡逻点 + 触发器」：网格射线算视线，听觉按距离和噪音累积，
 GOAP 规划器用谓词描述目标自己排动作顺序，追丢之后会挑藏身点、在谓词空间里跑 A* 排出
 "总脚程最短的搜索顺序"。游戏里按 F1 能直接看到每个哨兵的视野锥、听觉圈和决策时间线。
 
 0 第三方 AI 库、0 外部素材（图形全程序生成），五关约 20 分钟。手机不能玩，需要键盘鼠标。
+源码：https://github.com/lxb0957/sneak_ai
 
 
 ===== 一句话（朋友圈 / 签名 / 评论区） =====
-写了个潜行游戏，打开就能玩（要键盘，手机上玩不了）：
-https://stealth-protocol.app.workbuddy.host/?sharecode=777DHSP3EJ
+写了个潜行游戏，打开就能玩（要键盘，手机上玩不了）：https://lxb0957.github.io/
 
 
 ===== 对方说打不开 / 卡住时，回这句 =====
 - 卡在进度条：正常，第一次要下 20 MB 运行时，10-15 秒，别关。
 - 进去以后按键没反应：先在画面里点一下，键盘焦点要给到游戏。
 - 显示「这个游戏需要键盘和鼠标」：现在是手机或触屏，换电脑开同一个链接。
-- 想不等待：下载 26 MB 免安装版，双击就玩（落地页上就有）。
+- 整页打不开（浏览器报连接重置 / 一直转圈）：换一个入口，内容完全一样 ——
+  https://stealth-protocol.app.workbuddy.host/?sharecode=777DHSP3EJ
+- 想不等待：点「下载 Windows 版」拿 26 MB 免安装包，双击就玩，存档在你放 exe 的目录里。
+
+
+===== 自己去哪改 =====
+落地页源码    web/landing/index.html
+组装站点      python scripts/build_launch.py --pages     → dist/pages/
+部署          cd dist/pages && git add -A && git commit && git push
+线上地址      https://lxb0957.github.io/   （仓库 lxb0957/lxb0957.github.io，main 根目录）

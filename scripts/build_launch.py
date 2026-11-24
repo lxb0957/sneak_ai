@@ -24,10 +24,16 @@
     python scripts/build_launch.py            # 组装 dist/launch/（含便携包，50 MB）
     python scripts/build_launch.py --check    # 只检查，不写
     python scripts/build_launch.py --web-only # 组装 dist/launch_web/（不含 exe，24 MB）
+    python scripts/build_launch.py --pages    # 组装 dist/pages/（GitHub Pages 用，50 MB）
 
 `--web-only` 是给 Cloudflare Pages 这类「单文件上限 25 MB」的托管用的：便携包 26.3 MB
 会超限，所以干脆不放，下载按钮改指向 GitHub Releases。上传这些平台用
 `dist/launch_web.zip`（见 --zip）。
+
+`--pages` 产出 GitHub Pages 用户主页（`lxb0957.github.io`）用的目录：**便携包一起放**，
+这样下载和在线玩都在同一个域名下，不依赖 `github.com` 网页（国内常打不开）。
+GitHub Pages 没有那道 WAF，所以恢复正常的 `.zip` 后缀；再加 `.nojekyll` 关掉 Jekyll
+（否则 `_` 开头的文件会被吞）。部署：`cd dist/pages && git add -A && git push`。
 """
 
 from __future__ import annotations
@@ -74,10 +80,14 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true", help="只校验，不写盘")
     ap.add_argument("--web-only", action="store_true", help="不含 26 MB 便携包（单文件上限 25 MB 的托管用）")
+    ap.add_argument("--pages", action="store_true", help="产出 GitHub Pages 目录 dist/pages（含便携包，正常 .zip 名）")
     ap.add_argument("--zip", action="store_true", help="另外打一个 zip，方便网页版拖拽上传")
     args = ap.parse_args()
 
-    out = ROOT / "dist" / ("launch_web" if args.web_only else "launch")
+    if args.pages:
+        out = ROOT / "dist" / "pages"
+    else:
+        out = ROOT / "dist" / ("launch_web" if args.web_only else "launch")
 
     missing = [p for p in (WEB_SITE / "index.html", LANDING / "index.html") if not p.exists()]
     if missing:
@@ -111,13 +121,29 @@ def main() -> int:
         page.write_text(s, encoding="utf-8")
     else:
         (out / "download").mkdir(parents=True, exist_ok=True)
-        shutil.copy2(zip_path, out / "download" / DL_NAME)      # 坑 2
+        if args.pages:
+            # Pages 没有 WAF，用正常 .zip 名，并把按钮指过去（同源下载，不依赖 github.com）
+            shutil.copy2(zip_path, out / "download" / ZIP_NAME)
+            (out / ".nojekyll").write_text("", encoding="utf-8")
+            page = out / "index.html"
+            s = page.read_text(encoding="utf-8")
+            s = s.replace(
+                'href="download/stealth-protocol-win64" download="StealthProtocol-v1.8.14-win64.zip"',
+                f'href="download/{ZIP_NAME}" download="{ZIP_NAME}"',
+                1,
+            )
+            page.write_text(s, encoding="utf-8")
+        else:
+            shutil.copy2(zip_path, out / "download" / DL_NAME)  # 坑 2
 
     size = sum(f.stat().st_size for f in out.rglob("*") if f.is_file())
     biggest = max((f.stat().st_size, f.name) for f in out.rglob("*") if f.is_file())
     print(f"\n组装完成: {out}  ({size / 1048576:.1f} MB)")
     print(f"  最大单文件: {biggest[1]} {biggest[0] / 1048576:.1f} MB")
-    print("  index.html 下载按钮 -> " + (GH_RELEASES if args.web_only else "download/" + DL_NAME))
+    dl = GH_RELEASES if args.web_only else "download/" + (ZIP_NAME if args.pages else DL_NAME)
+    print("  index.html 下载按钮 -> " + dl)
+    if args.pages:
+        print("  部署: cd dist/pages && git add -A && git commit && git push")
 
     if args.zip:
         z = ROOT / "dist" / (out.name + ".zip")
