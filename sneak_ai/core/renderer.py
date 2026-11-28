@@ -87,6 +87,26 @@ class PixelRenderer:
             pygame.draw.ellipse(self._shadow, (0, 0, 0, 80), (0, 0, 26, 12))
         screen.blit(self._shadow, (sx - 13, sy - 3))
 
+        # 玩家脚下的定位环。
+        # 不是为了好看：这个游戏的地板是深蓝灰、敌人是暖红、玩家是蓝，
+        # 三个人物都只有 20 来像素高。缩成分享图或者坐远一点看屏幕时，
+        # "我在哪"经常要找两秒。一圈贴地的青色双弧是唯一常驻的自我标记，
+        # 半径刻意比阴影大一圈，压在地上而不压住身体。
+        if is_player:
+            # 贴脚的直角括弧，而不是整圈椭圆环：椭圆在扁比例下的 arc 描边
+            # 抗锯齿很差，远看就是一圈发灰的虚线。两段直角是像素风里
+            # 最干净的"这个单位是你"的写法，也压得住深色地板。
+            beat = 0.5 + 0.5 * math.sin(pygame.time.get_ticks() * 0.0022)
+            hi = self._lerp_color((104, 168, 206), C.COL_VISOR_PLAYER, 0.55 + 0.45 * beat)
+            arm, h = 5, 5      # 钩长、竖边半高
+            for s in (-1, 1):
+                vx = sx + s * 15
+                pygame.draw.line(screen, hi, (vx, sy - h), (vx, sy + h), 2)
+                pygame.draw.line(screen, hi, (vx, sy - h), (vx + s * arm, sy - h), 2)
+                pygame.draw.line(screen, hi, (vx, sy + h), (vx + s * arm, sy + h), 2)
+            # 底下一道极淡的短线，暗示"脚踩在这格上"
+            pygame.draw.line(screen, (46, 62, 78), (sx - 8, sy + 9), (sx + 8, sy + 9), 1)
+
         spr = self.sprites.sprite(body_color, facing, moving,
                                   crouch=sneaking, accent=accent)
         ax, ay = self.sprites.anchor

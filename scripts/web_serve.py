@@ -132,7 +132,15 @@ BODY_EXTRA = """<!-- [selfhost] 网页版体验补丁 -->
   #ld { position: fixed; inset: 0; z-index: 2147483000; display: flex; align-items: center;
         justify-content: center; background: #070b12; opacity: 1;
         transition: opacity .45s ease; }
-  #ld .box { width: min(30em, 86vw); text-align: center; }
+  /* 等着的那十几秒不该是一块纯黑。用一帧实机画面压到 26% 当底，
+     从落地页点进来时画面是连着的，不是"跳到一个进度条页面"。
+     16 KB，而且和 wasm 不同目录，不抢带宽。 */
+  #ld::before { content: ""; position: absolute; inset: 0; pointer-events: none;
+                background: url("/ld-bg.jpg") center/cover no-repeat; opacity: .26; }
+  #ld::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+               background: radial-gradient(ellipse at center,
+                           rgba(7,11,18,0) 0%, rgba(7,11,18,.55) 58%, rgba(7,11,18,.9) 100%); }
+  #ld .box { width: min(30em, 86vw); text-align: center; position: relative; z-index: 1; }
   #ld h2 { margin: 0 0 .2em; font-size: 1.12em; font-weight: 600; color: #e6edf3; letter-spacing: .02em; }
   #ld .sub { margin: 0 0 1.6em; font-size: .86em; color: #6d7f94; }
   #ld .bar { height: 4px; border-radius: 2px; background: #16202e; overflow: hidden; }

@@ -9,13 +9,39 @@
 音效清单：脚步、无线电报警、被发现、取得数据、胜利、失败。
 """
 
-import math
+# 注解延迟求值：`np` 在浏览器里是 None，而 `samples: np.ndarray`
+# 这类注解在**定义时**就会求值，会在导入阶段炸掉。
+from __future__ import annotations
 
-import numpy as np
+import math
+import sys
+
 import pygame
 
 SAMPLE_RATE = 22050
 MASTER_VOLUME = 0.45
+
+
+def _load_numpy():
+    """动态导入 numpy —— 这个"绕一圈"是为了浏览器版能启动。
+
+    为什么不在文件顶部写 `import numpy`：浏览器版（pygbag）会**静态扫描**
+    源码里的 import，把 numpy 一起打进包。那份 12.4 MB 的 wasm 在浏览器里
+    初始化会直接卡死 —— 实测最小 probe 加一行 `import numpy`，150 秒连
+    第一行 print 都出不来；去掉就 50 fps 正常跑。
+
+    字符串导入让静态扫描看不见它。桌面版照旧用 numpy：波形合成靠它做卷积
+    和向量运算，改纯 Python 会慢一个量级（每帧不用，但启动时要把十几个音效
+    一次性合成出来）。
+    """
+    import importlib
+    try:
+        return importlib.import_module("numpy")
+    except Exception:
+        return None
+
+
+np = _load_numpy()
 
 
 class SFX:
@@ -29,6 +55,12 @@ class SFX:
         self._rate = SAMPLE_RATE
         self._channels = 1
         if not enabled:
+            return
+        # 浏览器版直接静音，两条原因：
+        # 1. 合成音效要 numpy，而它在 wasm 里会把启动卡死（见 _load_numpy 的说明）；
+        # 2. 浏览器要求用户先交互才能出声，web 版有个"点击开始"，那之后的音效
+        #    本来也只能算锦上添花。
+        if np is None or sys.platform == "emscripten":
             return
         try:
             # pygame.init() 通常已经用默认参数（44100/-16/2）把 mixer 打开了，

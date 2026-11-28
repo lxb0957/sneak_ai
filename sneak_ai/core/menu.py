@@ -32,6 +32,10 @@ _DIM = (140, 150, 162)
 _FAINT = (86, 94, 106)
 _TEXT = (226, 232, 240)
 
+# 背景遮罩：把地图压到"只剩轮廓"的程度，文字才压得住
+# 太亮 → 字和墙缝混在一起；太暗 → 和一整块纯黑没区别（白做）
+_BG_VEIL = (7, 9, 13, 198)
+
 
 class Menu:
     """主菜单画面与输入。self.active 为 False 时进入游戏。"""
@@ -49,6 +53,18 @@ class Menu:
         self.rects = []
         # 左右箭头的可点区域：(rect, ±1)。第一帧之前点鼠标也不能崩。
         self._arrows = []
+        # 背景图（当前选中关卡的地图剪影）。None = 退化成纯色底，
+        # 所以菜单在没有图形环境/截图脚本里单独跑也不会崩。
+        self.bg = None
+        self._veil = None
+
+    def set_background(self, surf) -> None:
+        """换背景图。传 None 立刻回到纯色底。
+
+        为什么背景由 Game 注入而不是菜单自己生成：菜单不建世界、不读关卡数据 ——
+        这条边界是刻意的（见模块文档）。菜单只负责"把给它的图铺开并压暗"。
+        """
+        self.bg = surf
 
     # ---- 关卡选择 ----
     @property
@@ -130,7 +146,10 @@ class Menu:
 
     def draw(self, screen, muted: bool, t: float) -> None:
         W, H = screen.get_width(), screen.get_height()
-        screen.fill(_BG)
+        if self.bg is not None:
+            self._draw_background(screen, W, H, t)
+        else:
+            screen.fill(_BG)
         self.rects = []
 
         def blit(surf, center, name):
@@ -233,3 +252,31 @@ class Menu:
         # 不说清楚范围的话，玩家会以为这条成绩进了总榜（实际不会）。
         blit(self.tc.get("mute", self.foot_text(muted), 15, _FAINT),
              (W // 2, H - 40), "mute")
+
+    def _draw_background(self, screen, W: int, H: int, t: float) -> None:
+        """铺地图剪影 + 压暗遮罩。
+
+        为什么不做成"模糊虚化"：这个游戏的全部视觉语言都是硬边像素，
+        虚化的背景会像另一款游戏。压暗到只剩轮廓，既保住像素感，
+        又不会和前景那几行字抢注意力。
+
+        平移幅度刻意做得很小（±12px、约 20 秒一个来回）：
+        背景是"活着的"，但看一眼文字不会被它带走视线。
+        """
+        bw, bh = self.bg.get_size()
+        dx = int(math.sin(t * 0.055) * 12)
+        dy = int(math.cos(t * 0.042) * 9)
+        if bw > W:
+            x = max(-(bw - W), min(0, -(bw - W) // 2 + dx))
+        else:
+            x = (W - bw) // 2
+        if bh > H:
+            y = max(-(bh - H), min(0, -(bh - H) // 2 + dy))
+        else:
+            y = (H - bh) // 2
+        screen.blit(self.bg, (x, y))
+
+        if self._veil is None or self._veil.get_size() != (W, H):
+            self._veil = pygame.Surface((W, H), pygame.SRCALPHA)
+            self._veil.fill(_BG_VEIL)
+        screen.blit(self._veil, (0, 0))

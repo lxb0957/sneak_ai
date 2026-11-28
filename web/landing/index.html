@@ -32,7 +32,7 @@
 
   /* ---------- hero ---------- */
   header { padding: 68px 0 56px; }
-  .hero { display: grid; grid-template-columns: 1fr 1.05fr; gap: 48px; align-items: center; }
+  .hero { display: grid; grid-template-columns: minmax(0, 0.84fr) minmax(0, 1.16fr); gap: 44px; align-items: center; }
   .tag {
     display: inline-block; margin-bottom: 18px; padding: 4px 12px;
     border: 1px solid var(--line); border-radius: 999px;
@@ -68,6 +68,35 @@
     box-shadow: 0 22px 60px rgba(0,0,0,.6), 0 0 0 1px rgba(91,224,138,.07);
   }
   .shot img { display: block; width: 100%; height: auto; }
+
+  /* 实机片段：首屏唯一"会动"的东西。静止截图讲不清"视野锥扫过来"这件事，
+     六秒循环能讲清。379 KB 的 webm，比一张大 PNG 还小。 */
+  .demo {
+    margin: 0; background: #05080d;
+  }
+  .demo video { display: block; width: 100%; height: auto; filter: brightness(1.1) contrast(1.03); }
+  .demo figcaption {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    padding: 28px 14px 11px; font-size: 13px; line-height: 1.5;
+    color: #d3dde8;
+    background: linear-gradient(rgba(5,8,13,0), rgba(5,8,13,.88) 62%);
+  }
+  .demo .badge {
+    position: absolute; top: 10px; right: 10px;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 9px 3px 7px; border-radius: 999px;
+    background: rgba(6,10,16,.72); border: 1px solid #2b3a4c;
+    font-size: 12px; color: #b9c6d5; letter-spacing: .04em;
+  }
+  .demo .badge i {
+    width: 6px; height: 6px; border-radius: 50%; background: #e8453c;
+    box-shadow: 0 0 0 3px rgba(232,69,60,.22);
+    animation: live 2.4s ease-in-out infinite;
+  }
+  @keyframes live { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+  @media (prefers-reduced-motion: reduce) {
+    .demo .badge i { animation: none }
+  }
 
   /* ---------- stats ---------- */
   .stats {
@@ -122,7 +151,10 @@
 
   @media (max-width: 860px) {
     header { padding: 44px 0 36px; }
-    .hero { grid-template-columns: 1fr; gap: 32px; }
+    /* 手机上竖排：把实机片段提到标题之前当开屏。
+       放在文字后面的话，390px 宽的屏幕首屏全是字，最抓眼的东西在折叠线以下。 */
+    .hero { display: flex; flex-direction: column; gap: 26px; }
+    .hero > .shot { order: -1; }
     h1 { font-size: 30px; }
     .stats, .grid3, .req { grid-template-columns: 1fr; }
     td:first-child { width: 130px; }
@@ -157,7 +189,16 @@
           之后按 <kbd>Enter</kbd> 开局，<kbd>WASD</kbd> 走。要键盘和鼠标，<b>手机开不了</b>。<br>
           想双击就玩，点「下载 Windows 版」—— 同一个游戏，不用等。</p>
       </div>
-      <div class="shot"><img src="shot-level.png" alt="游戏画面：第 1 关，HUD 显示用时、暴露条、体力与弹药"></div>
+      <figure class="shot demo">
+        <video id="demo" autoplay muted loop playsinline preload="auto"
+               poster="poster.jpg" width="960" height="720"
+               aria-label="实机画面：三个哨兵发现玩家后围过来，红色视野锥铺满走廊">
+          <source src="clip.webm" type="video/webm">
+          <source src="clip.mp4" type="video/mp4">
+        </video>
+        <span class="badge"><i></i>实机 · 6 秒循环</span>
+        <figcaption>第 1 关，被三个人堵在走廊里的时候</figcaption>
+      </figure>
     </div>
   </div>
 </header>
@@ -264,6 +305,15 @@
 (function () {
   var a = document.getElementById('play');
   if (a && location.search) a.href = 'play/' + location.search;
+
+  /* 系统开了"减少动态效果"就别自动播 —— 那是无障碍设置，不是建议。
+     不播时 poster 顶着，画面照样在。 */
+  var demo = document.getElementById('demo');
+  if (demo && window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    demo.removeAttribute('autoplay');
+    try { demo.pause(); } catch (e) {}
+  }
 
   // 别人想转发时，别把分享码弄丢
   var s = document.getElementById('share');

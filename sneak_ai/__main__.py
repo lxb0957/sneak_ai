@@ -165,6 +165,8 @@ class Game:
         self.assist = settings.load_assist()
         self.menu = Menu(self.best)
         self.menu.assist = self.assist
+        # 菜单背景当前烘的是哪一关。-1 = 还没烘过（见 _render_menu）
+        self._menu_bg_sel = -1
 
         self._time_accum = 0.0  # 驱动脉动/动画相位
         self._step_acc = 0.0    # 脚步音效的移动距离累积
@@ -448,8 +450,95 @@ class Game:
         self._show_intro = True
 
     def _render_menu(self) -> None:
+        # 背景跟着"当前选中的关卡"走，换关才重烘；其余帧只比一个 int。
+        # 放在渲染里而不是 Menu.move 里，是因为鼠标点箭头也能换关 ——
+        # 让"谁改的 sel"去负责刷新，早晚会漏一条路径。
+        if self.menu.sel != self._menu_bg_sel:
+            self._menu_bg_sel = self.menu.sel
+            self.menu.set_background(self._make_menu_bg(self.menu.sel))
         self.menu.draw(self.screen, self.sfx.muted, self._time_accum)
         pygame.display.flip()
+
+    def _make_menu_bg(self, idx: int):
+        """给菜单画一张"当前关卡的平面图剪影"。
+
+        为什么不用游戏内那张 `MapView` 烘焙图：它是为**玩**设计的 ——
+        地板和墙的亮度只差一点点（免得抢视野锥的注意力）。直接拿来当背景，
+        压暗之后就只剩一堆看不出结构的方法块。这张图是为**看**画的：
+        墙压亮、地板压黑，缩到一屏外也还是一张能读的平面图。
+
+        为什么放在 Game 而不是 Menu：Menu 不建世界、不读关卡数据
+        （见 menu 模块开头那条边界）。这里是唯一同时认识"关卡"和"菜单"的地方。
+        """
+        try:
+            lv = L.LEVELS[idx]
+            grid = lv.build()
+            spawn = lv.spawn
+        except Exception:
+            # 背景是锦上添花。烘不出来就退回纯色底，绝不能因为它进不去游戏。
+            return None
+
+        W, H = self.screen.get_size()
+        ts = C.TILE_SIZE
+        # 比屏幕多画一圈：菜单背景会做 ±12px 的缓慢平移，不留余量会露黑边
+        cols, rows = W // ts + 3, H // ts + 3
+
+        # 视角中心：取所有可通行格的重心，而不是出生点。
+        # 出生点几乎总是贴在地图边缘（玩家从外面潜进去），以它为中心开窗，
+        # 半边画面会是实心墙 —— 背景就成了"左边一片黑"，白做。
+        # 重心一定落在设施内部，走廊和房间吃满画面。
+        fx = fy = cnt = 0
+        for gy in range(grid.h):
+            for gx in range(grid.w):
+                if not grid.is_wall(gx, gy):
+                    fx += gx
+                    fy += gy
+                    cnt += 1
+        if cnt:
+            cx, cy = fx // cnt, fy // cnt
+        else:                      # 理论上不可能，兜底用出生点
+            cx, cy = int(spawn[0]), int(spawn[1])
+        ox = max(0, min(grid.w - cols, cx - cols // 2))
+        oy = max(0, min(grid.h - rows, cy - rows // 2))
+
+        bg = pygame.Surface((cols * ts, rows * ts)).convert()
+        bg.fill((13, 16, 21))
+        wall, wall_top, wall_lip = (88, 96, 112), (122, 130, 148), (146, 154, 172)
+        for gy in range(rows):
+            wy = oy + gy
+            for gx in range(cols):
+                wx = ox + gx
+                px, py = gx * ts, gy * ts
+                if grid.is_wall(wx, wy):
+                    bg.fill(wall, (px, py, ts, ts))
+                    # 只在"露出来的顶面"提亮：连续墙段保持一整片，否则全是横纹
+                    if not grid.is_wall(wx, wy - 1):
+                        bg.fill(wall_top, (px, py, ts, ts // 3))
+                        bg.fill(wall_lip, (px, py, ts, 3))
+                else:
+                    # 地板保留棋盘格：菜单背景全靠这个节奏暗示"这是一张格子地图"
+                    bg.fill((24, 28, 35) if (wx + wy) % 2 else (20, 24, 31),
+                            (px, py, ts, ts))
+                    # 砖缝：横竖各一条暗线，1:1 尺度下才看得出来
+                    pygame.draw.line(bg, (17, 20, 26), (px, py), (px + ts, py))
+                    pygame.draw.line(bg, (17, 20, 26), (px, py), (px, py + ts))
+
+        # 敌方岗哨：取每条巡逻线的起点画一个暗红点。
+        # 这是"战术简报"的味道 —— 静止的平面图看不出这关有多少人守着，
+        # 一排红点一铺，第一眼就知道"这地方有人"。位置信息本来就是公开的
+        # （游戏里哨兵一直在走），所以不构成剧透。
+        for route in lv.patrols():
+            try:
+                ex, ey = route[0], route[1]
+            except (TypeError, IndexError):
+                continue
+            px = (int(ex) - ox) * ts + ts // 2
+            py = (int(ey) - oy) * ts + ts // 2
+            if not (0 <= px < bg.get_width() and 0 <= py < bg.get_height()):
+                continue
+            pygame.draw.circle(bg, (46, 22, 24), (px, py), 9)
+            pygame.draw.circle(bg, (128, 54, 50), (px, py), 4)
+        return bg
 
     # ============ 引导提示 ============
     def _update_tips(self, dt: float) -> None:

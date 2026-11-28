@@ -104,7 +104,14 @@ def patch() -> int:
 
 def export() -> int:
     print("== 4/4 导出静态站", flush=True)
-    return ws.offline_export()
+    rc = ws.offline_export()
+    if rc == 0:
+        # 装载页底图。它和落地页素材放在一起，但页面从 /play/ 引用 /ld-bg.jpg，
+        # 所以得在站点根也有一份 —— 手工复制漏一次，线上装载页就退回纯黑。
+        bg = WEB / "landing" / "ld-bg.jpg"
+        if bg.exists():
+            shutil.copy2(bg, ws.OUT / "ld-bg.jpg")
+    return rc
 
 
 def verify() -> int:

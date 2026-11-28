@@ -29,7 +29,9 @@ CI 和 `test_w35` 用它断言 —— 否则字体缺失的表现是"中文变�
 而方块不会让任何测试变红。
 """
 
+import os
 import sys
+from pathlib import Path
 
 import pygame
 
@@ -37,6 +39,11 @@ from .. import constants as C
 from .i18n import t
 
 _FONT_CACHE = {}
+
+# 子集化后的 Noto Sans SC（scripts/make_web_font.py 生成，约 500 KB）。
+# 浏览器里没有系统字体，pygame 默认字体也没有汉字 —— 实测整屏都是空心方框。
+# 桌面版**不用**它：系统雅黑/苹方字形更全，而且一直是历史版本的样子。
+_BUNDLED_FONT = "assets/fonts/game-zh-subset.ttf"
 
 # 按平台排的候选名：全部小写、去空格（SysFont 内部就是这么比的）。
 # 顺序有讲究：Windows 的放最前，保证 Windows 上的命中结果和历史版本一致。
@@ -56,6 +63,19 @@ _font_file = None
 _font_resolved = False
 
 
+def _bundled_font_path():
+    """要不要用自带字体？浏览器里必须用，桌面版不用。
+
+    `SNEAK_BUNDLED_FONT=1` 是给测试和截图用的开关：让桌面版也走这条路，
+    这样"字体缺字"这种事在本地就能发现，不用等浏览器。
+    """
+    if sys.platform != "emscripten" and os.environ.get("SNEAK_BUNDLED_FONT") != "1":
+        return None
+    # 本文件在 sneak_ai/core/ 下，parents[2] 就是包根（打包后同样成立）
+    p = Path(__file__).resolve().parents[2] / _BUNDLED_FONT
+    return p if p.exists() else None
+
+
 def font_file():
     """探针：这台机器上有哪个中文字体文件。返回 None = 一个都没有。
 
@@ -66,6 +86,11 @@ def font_file():
     if _font_resolved:
         return _font_file
     _font_resolved = True
+
+    bundled = _bundled_font_path()
+    if bundled is not None:
+        _font_file = str(bundled)
+        return _font_file
 
     path = pygame.font.match_font(",".join(_CJK_FONTS))
     if path is None:
@@ -86,7 +111,14 @@ def font(size: int, bold: bool = False) -> pygame.font.Font:
     key = (size, bold)
     f = _FONT_CACHE.get(key)
     if f is None:
-        f = pygame.font.SysFont(list(_CJK_FONTS), size, bold=bold)
+        bundled = _bundled_font_path()
+        if bundled is not None:
+            # 只有 Regular 一个字重，粗体用 SDL_ttf 的合成加粗顶
+            f = pygame.font.Font(str(bundled), size)
+            if bold:
+                f.set_bold(True)
+        else:
+            f = pygame.font.SysFont(list(_CJK_FONTS), size, bold=bold)
         _FONT_CACHE[key] = f
         if font_file() is None and len(_FONT_CACHE) == 1:
             # 只在**第一次**建字体时喊一声：每帧都喊等于没喊。
